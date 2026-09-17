@@ -1,0 +1,11 @@
+cabal-version:      3.0
+name:               sil-interpreter
+version:            0.1.0.0
+build-type:         Simple
+
+executable sil-interpreter
+  main-is:          Main.hs
+  hs-source-dirs:   app, src
+  default-language: Haskell2010
+  build-depends:    base >=4.14 && <5, containers
+  ghc-options:      -Wall
