@@ -7,38 +7,47 @@ Starter project for a coursework interpreter implemented through an AST.
 - AST for expressions, statements, loops, conditions and assignments;
 - JSON generation from AST;
 - interpreter with variables, input, output and basic runtime errors;
-- a factorial program built directly as an AST.
+- a sample factorial program written in SIL.
 
-## Run
+## Command-line interface
 
 Install GHC and Cabal (for macOS, the usual option is GHCup), then run:
 
 ```sh
 cd sil-interpreter
-cabal run
+cabal run sil-interpreter -- --help
 ```
 
-Expected result: JSON for the sample AST and `Right [120,24,6]`.
+Execute a SIL program. Values passed to `write` are printed one per line:
 
-## Parser
+```console
+$ cabal run sil-interpreter -- run program.sil --input 3 5 4 3
+120
+24
+6
+```
 
-Запуск парсера через интерпретатор:
+Inspect the parsed AST as compact or formatted JSON:
 
 ```sh
-cabal run sil-interpreter -- program.sil 3 5 4 3
+cabal run sil-interpreter -- ast program.sil
+cabal run sil-interpreter -- ast program.sil --pretty
 ```
 
-- `program.sil` — файл с программой на SIL;
-- `3 5 4 3` — входные целые числа, которые будут переданы операторам `read` по порядку;
-- после разбора программа выводится в JSON и выполняется.
+Check syntax without executing the program:
 
-Если запустить `cabal run` без аргументов, выполнится встроенный демонстрационный пример.
-В коде парсер вызывается функцией `parseProgram :: String -> Either ParseError Program`.
+```sh
+cabal run sil-interpreter -- check program.sil
+```
 
-## Team split
+The `--input`/`-i` option accepts space-separated or comma-separated integers
+that are consumed by `read` statements in order. These are equivalent:
 
-1. One person: `src/AST.hs` and `src/Json.hs`.
-2. One person: add `src/Parser.hs` using Megaparsec and connect it to `app/Main.hs`.
-3. One person: extend `src/Interpreter.hs` and add tests for errors and edge cases.
+```sh
+cabal run sil-interpreter -- run program.sil --input 3 5 4 3
+cabal run sil-interpreter -- run program.sil -i 3,5,4,3
+```
 
-The next major milestone is a parser that converts source text to `Program`.
+Running the executable without arguments displays the help text.
+
+The parser is also available as `parseProgram :: String -> Either ParseError Program`.

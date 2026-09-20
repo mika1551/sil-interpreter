@@ -6,7 +6,8 @@ build-type:         Simple
 executable sil-interpreter
   main-is:          Main.hs
   hs-source-dirs:   app, src
-  other-modules:    AST, Interpreter, Json, Parser
+  other-modules:    AST, CLI, Interpreter, Json, Parser, Paths_sil_interpreter
+  autogen-modules:  Paths_sil_interpreter
   default-language: Haskell2010
   build-depends:    base >=4.14 && <5, containers
   ghc-options:      -Wall
