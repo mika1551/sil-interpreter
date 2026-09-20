@@ -1,55 +1,53 @@
 module Main (main) where
 
-import AST
-import System.Environment (getArgs)
+import AST (Program)
+import CLI
+import Control.Exception (IOException, try)
+import Data.Version (showVersion)
 import Interpreter
 import Json
 import Parser
-
--- The first input is repetition count. Each following input is a value whose factorial is printed.
-factorialProgram :: Program
-factorialProgram = Program
-  [ ReadVar "rep"
-  , While (Var "rep") (Block
-      [ AssignOp "rep" Sub (Const 1)
-      , ReadVar "n"
-      , Assign "f" (Const 1)
-      , While (Var "n") (Block
-          [ AssignOp "f" Mul (Var "n")
-          , AssignOp "n" Sub (Const 1)
-          ])
-      , Write (Var "f")
-      ])
-  ]
+import Paths_sil_interpreter (version)
+import System.Environment (getArgs)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
 main = do
   arguments <- getArgs
-  case arguments of
-    [] -> runDemo
-    sourceFile : inputValues -> runSourceFile sourceFile inputValues
+  case parseCommand arguments of
+    Left message -> failWith (message ++ "\nTry 'sil-interpreter --help' for usage.")
+    Right command -> executeCommand command
 
-runDemo :: IO ()
-runDemo = do
-  putStrLn "AST as JSON:"
-  putStrLn (programToJson factorialProgram)
-  putStrLn "Result for input [3, 5, 4, 3]:"
-  print (runProgram [3, 5, 4, 3] factorialProgram)
+executeCommand :: Command -> IO ()
+executeCommand command = case command of
+  Help -> putStrLn helpText
+  Version -> putStrLn ("sil-interpreter " ++ showVersion version)
+  Run sourceFile inputValues -> withProgram sourceFile $ \program ->
+    case runProgram inputValues program of
+      Left runtimeError -> failWith (renderRuntimeError runtimeError)
+      Right valuesWritten -> mapM_ print valuesWritten
+  Ast sourceFile format -> withProgram sourceFile $ \program ->
+    putStrLn $ case format of
+      Compact -> programToJson program
+      Pretty -> programToPrettyJson program
+  Check sourceFile -> withProgram sourceFile $ \_ ->
+    putStrLn (sourceFile ++ ": OK")
 
-runSourceFile :: FilePath -> [String] -> IO ()
-runSourceFile sourceFile inputValues = do
-  source <- readFile sourceFile
-  case (parseProgram source, parseInputs inputValues) of
-    (Left parseError, _) -> putStrLn ("Parse error: " ++ parseError)
-    (_, Left inputError) -> putStrLn ("Input error: " ++ inputError)
-    (Right program, Right values) -> do
-      putStrLn "AST as JSON:"
-      putStrLn (programToJson program)
-      print (runProgram values program)
+withProgram :: FilePath -> (Program -> IO ()) -> IO ()
+withProgram sourceFile action = do
+  sourceResult <- try (readFile sourceFile) :: IO (Either IOException String)
+  case sourceResult of
+    Left fileError -> failWith ("cannot read '" ++ sourceFile ++ "': " ++ show fileError)
+    Right source -> case parseProgram source of
+      Left parseError -> failWith (sourceFile ++ ": " ++ parseError)
+      Right program -> action program
 
-parseInputs :: [String] -> Either String [Int]
-parseInputs = traverse parseInput
-  where
-    parseInput value = case reads value of
-      [(number, "")] -> Right number
-      _ -> Left ("expected integer, got " ++ value)
+renderRuntimeError :: StateError -> String
+renderRuntimeError runtimeError = case runtimeError of
+  UndefinedVariable name -> "runtime error: undefined variable '" ++ name ++ "'"
+  InputExhausted -> "runtime error: input exhausted"
+  DivisionByZero -> "runtime error: division by zero"
+
+failWith :: String -> IO a
+failWith message = hPutStrLn stderr ("error: " ++ message) >> exitFailure
