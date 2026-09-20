@@ -1,0 +1,15 @@
+read rep;
+
+while rep {
+    rep -= 1;
+    read n;
+
+    f = 1;
+
+    while n {
+        f *= n;
+        n -= 1;
+    }
+
+    write f;
+}
