@@ -20,6 +20,21 @@ cabal run
 
 Expected result: JSON for the sample AST and `Right [120,24,6]`.
 
+## Parser
+
+Запуск парсера через интерпретатор:
+
+```sh
+cabal run sil-interpreter -- program.sil 3 5 4 3
+```
+
+- `program.sil` — файл с программой на SIL;
+- `3 5 4 3` — входные целые числа, которые будут переданы операторам `read` по порядку;
+- после разбора программа выводится в JSON и выполняется.
+
+Если запустить `cabal run` без аргументов, выполнится встроенный демонстрационный пример.
+В коде парсер вызывается функцией `parseProgram :: String -> Either ParseError Program`.
+
 ## Team split
 
 1. One person: `src/AST.hs` and `src/Json.hs`.
