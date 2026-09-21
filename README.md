@@ -13,27 +13,43 @@ The interpreter supports a compact imperative language with integer arithmetic a
 - input/output statements: `read`, `write`
 - flow control: `if ... else`, `while`, `do ... while`, `for`
 - blocks: `{ ... }`
+- comments: `-- ...` and `(* ... *)`
 - empty statement: `skip`
 - runtime checks for undefined variables, exhausted input, and division by zero
 - JSON rendering of the parsed AST for inspection
 
+The program is a block with one or more statements inside it:
+
+```sil
+{
+    read(n);
+    if (n > 0) {
+        write(n);
+    } else {
+        write(0);
+    }
+}
+```
+
 ## Example program
 
 ```sil
-read rep;
+{
+    read(rep);
 
-while rep {
-    rep -= 1;
-    read n;
+    while (rep > 0) {
+        rep -= 1;
+        read(n);
 
-    f = 1;
+        f = 1;
 
-    while n {
-        f *= n;
-        n -= 1;
+        while (n > 0) {
+            f *= n;
+            n -= 1;
+        }
+
+        write(f);
     }
-
-    write f;
 }
 ```
 

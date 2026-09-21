@@ -30,37 +30,37 @@ trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 checks :: Test
 checks = TestList
-  [ mkEq "parse simple assignment" (Program [Assign "x" (Const 5)]) (parseOK "x = 5;")
+  [ mkEq "parse program block" (Program [Assign "x" (Const 5)]) (parseOK "{ x = 5; }")
+  , mkEq "parse function-style read/write"
+      (Program [ReadVar "n", Write (Var "n")])
+      (parseOK "{ read(n); write(n); }")
   , mkEq "parse arithmetic precedence"
       (Program [Assign "x" (Bin Add (Const 1) (Bin Mul (Const 2) (Const 3)))])
-      (parseOK "x = 1 + 2 * 3;")
+      (parseOK "{ x = 1 + 2 * 3; }")
   , mkEq "parse comparison and logic"
       (Program [Assign "flag" (Bin Or (Bin And (Bin Ge (Var "a") (Const 0)) (Bin Le (Var "b") (Const 10))) (Bin Eq (Var "c") (Const 1)))])
-      (parseOK "flag = ((a >= 0) && (b <= 10)) || (c == 1);")
+      (parseOK "{ flag = ((a >= 0) && (b <= 10)) || (c == 1); }")
   , mkEq "parse while block"
       (Program [While (Bin Gt (Var "n") (Const 0)) (Block [AssignOp "n" Sub (Const 1)])])
-      (parseOK "while n > 0 { n -= 1; }")
+      (parseOK "{ while (n > 0) { n -= 1; } }")
   , mkEq "parse if else"
       (Program [If (Bin Eq (Var "x") (Const 0)) (Write (Var "x")) (Just (Write (Const 1)))])
-      (parseOK "if x == 0 write x; else write 1;")
-  , mkEq "parse if without else"
-      (Program [If (Bin Gt (Var "x") (Const 0)) (Assign "y" (Const 1)) Nothing])
-      (parseOK "if x > 0 y = 1;")
+      (parseOK "{ if (x == 0) write(x); else write(1); }")
+  , mkEq "parse elif"
+      (Program [If (Bin Gt (Var "x") (Const 0)) (Assign "y" (Const 1)) (Just (If (Bin Lt (Var "x") (Const 0)) (Assign "y" (Const 2)) Nothing))])
+      (parseOK "{ if (x > 0) y = 1; elif (x < 0) y = 2; }")
   , mkEq "parse do while"
       (Program [DoWhile (Assign "x" (Const 1)) (Bin Gt (Var "x") (Const 0))])
-      (parseOK "do x = 1; while x > 0;")
+      (parseOK "{ do x = 1; while (x > 0); }")
   , mkEq "parse for loop"
       (Program [For (Assign "i" (Const 0)) (Bin Lt (Var "i") (Const 3)) (AssignOp "i" Add (Const 1)) (Write (Var "i"))])
-      (parseOK "for (i = 0; i < 3; i += 1) write i;")
-  , mkEq "parse read and write"
-      (Program [ReadVar "n", Write (Var "n")])
-      (parseOK "read n; write n;")
+      (parseOK "{ for (i = 0; i < 3; i += 1) write(i); }")
   , mkEq "parse block and skip"
       (Program [Block [Assign "a" (Const 1), Skip, Write (Var "a")]])
-      (parseOK "{ a = 1; skip; write a; }")
-  , mkEq "parse comment and whitespace"
+      (parseOK "{ { a = 1; skip; write(a); } }")
+  , mkEq "parse comments"
       (Program [Assign "x" (Const 5)])
-      (parseOK "x = 5; // comment\n")
+      (parseOK "{ -- comment\n x = 5; (* block comment *) }")
   ]
 
 runtimeChecks :: Test

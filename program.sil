@@ -1,15 +1,17 @@
-read rep;
+{
+    read(rep);
 
-while rep {
-    rep -= 1;
-    read n;
+    while (rep > 0) {
+        rep -= 1;
+        read(n);
 
-    f = 1;
+        f = 1;
 
-    while n {
-        f *= n;
-        n -= 1;
+        while (n > 0) {
+            f *= n;
+            n -= 1;
+        }
+
+        write(f);
     }
-
-    write f;
 }

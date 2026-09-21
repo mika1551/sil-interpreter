@@ -7,6 +7,7 @@ import AST
 import Control.Applicative ((<|>))
 import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
 import Text.ParserCombinators.ReadP
+import qualified Text.ParserCombinators.ReadP as R
 
 type ParseError = String
 
@@ -17,7 +18,11 @@ parseProgram source = case readP_to_S (spacesP *> programP <* spacesP <* eof) so
   _ -> Left "ambiguous syntax"
 
 programP :: ReadP Program
-programP = Program <$> many stmtP
+programP = do
+  symbol "{"
+  statements <- many1 stmtP
+  symbol "}"
+  pure (Program statements)
 
 stmtP :: ReadP Stmt
 stmtP =
@@ -32,50 +37,80 @@ stmtP =
   <|> skipP
 
 blockP :: ReadP Stmt
-blockP = Block <$> between (symbol "{") (symbol "}") (many stmtP)
+blockP = do
+  symbol "{"
+  statements <- many stmtP
+  symbol "}"
+  pure (Block statements)
 
 readP :: ReadP Stmt
-readP = ReadVar <$> (keyword "read" *> identifier <* symbol ";")
+readP = do
+  keyword "read"
+  name <- parenthesized identifier
+  optionalSemicolon
+  pure (ReadVar name)
 
 writeP :: ReadP Stmt
-writeP = Write <$> (keyword "write" *> exprP <* symbol ";")
+writeP = do
+  keyword "write"
+  value <- parenthesized exprP
+  optionalSemicolon
+  pure (Write value)
 
 ifP :: ReadP Stmt
 ifP = do
   keyword "if"
-  condition <- exprP
+  condition <- parenthesized exprP
   thenBranch <- stmtP
-  elseBranch <- (Just <$> (keyword "else" *> stmtP)) <|> pure Nothing
+  elseBranch <- elsePartP <|> pure Nothing
   pure (If condition thenBranch elseBranch)
+
+elsePartP :: ReadP (Maybe Stmt)
+elsePartP =
+      (do
+        keyword "else"
+        Just <$> stmtP)
+  <|> (do
+        keyword "elif"
+        condition <- parenthesized exprP
+        thenBranch <- stmtP
+        rest <- elsePartP <|> pure Nothing
+        pure (Just (If condition thenBranch rest)))
 
 whileP :: ReadP Stmt
 whileP = do
   keyword "while"
-  condition <- exprP
-  While condition <$> stmtP
+  condition <- parenthesized exprP
+  body <- stmtP
+  pure (While condition body)
 
 doWhileP :: ReadP Stmt
 doWhileP = do
   keyword "do"
   body <- stmtP
   keyword "while"
-  condition <- exprP
-  symbol ";"
+  condition <- parenthesized exprP
+  optionalSemicolon
   pure (DoWhile body condition)
 
 forP :: ReadP Stmt
 forP = do
   keyword "for"
   symbol "("
-  initial <- assignmentP
-  condition <- exprP <* symbol ";"
+  initial <- assignmentCore
+  symbol ";"
+  condition <- exprP
+  symbol ";"
   step <- assignmentCore
   symbol ")"
   body <- stmtP
   pure (For initial condition step body)
 
 assignmentP :: ReadP Stmt
-assignmentP = assignmentCore <* symbol ";"
+assignmentP = do
+  statement <- assignmentCore
+  optionalSemicolon
+  pure statement
 
 assignmentCore :: ReadP Stmt
 assignmentCore = do
@@ -96,7 +131,16 @@ assignmentOperator =
   <|> (Just Mod <$ symbol "%=")
 
 skipP :: ReadP Stmt
-skipP = Skip <$ (keyword "skip" <* symbol ";")
+skipP = do
+  keyword "skip"
+  optionalSemicolon
+  pure Skip
+
+optionalSemicolon :: ReadP ()
+optionalSemicolon = () <$ R.optional (symbol ";")
+
+parenthesized :: ReadP a -> ReadP a
+parenthesized parser = between (symbol "(") (symbol ")") parser
 
 exprP :: ReadP Expr
 exprP = orP
@@ -131,7 +175,7 @@ primaryP :: ReadP Expr
 primaryP =
       Const <$> integer
   <|> Var <$> identifier
-  <|> between (symbol "(") (symbol ")") exprP
+  <|> parenthesized exprP
 
 identifier :: ReadP String
 identifier = lexeme $ do
@@ -163,8 +207,13 @@ lexeme :: ReadP a -> ReadP a
 lexeme parser = parser <* spacesP
 
 spacesP :: ReadP ()
-spacesP = skipMany (satisfy isSpace <|> (comment *> pure ' '))
+spacesP = skipMany (satisfy isSpace <|> lineComment <|> blockComment)
   where
-    comment = do
-      string "//"
+    lineComment = do
+      string "--"
       skipMany (satisfy (/= '\n'))
+      pure ' '
+    blockComment = do
+      string "(*"
+      manyTill get (string "*)")
+      pure ' '
