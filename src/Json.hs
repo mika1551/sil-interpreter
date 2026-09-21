@@ -47,7 +47,7 @@ binOpName :: BinOp -> String
 binOpName op = case op of
   Add -> "+"; Sub -> "-"; Mul -> "*"; Div -> "/"; Mod -> "%"
   Eq -> "=="; Neq -> "!="; Lt -> "<"; Le -> "<="; Gt -> ">"; Ge -> ">="
-  And -> "&&"; Or -> "||"
+  And -> "&&"; Or -> "!!"
 
 object :: [(String, JsonValue)] -> JsonValue
 object = JsonObject

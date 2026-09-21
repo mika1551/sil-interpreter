@@ -102,7 +102,7 @@ exprP :: ReadP Expr
 exprP = orP
 
 orP :: ReadP Expr
-orP = chainl1 andP (Bin Or <$ symbol "||")
+orP = chainl1 andP (Bin Or <$ symbol "!!")
 
 andP :: ReadP Expr
 andP = chainl1 comparisonP (Bin And <$ symbol "&&")
