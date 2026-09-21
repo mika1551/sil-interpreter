@@ -39,7 +39,7 @@ checks = TestList
       (parseOK "{ x = 1 + 2 * 3; }")
   , mkEq "parse comparison and logic"
       (Program [Assign "flag" (Bin Or (Bin And (Bin Ge (Var "a") (Const 0)) (Bin Le (Var "b") (Const 10))) (Bin Eq (Var "c") (Const 1)))])
-      (parseOK "{ flag = ((a >= 0) && (b <= 10)) || (c == 1); }")
+      (parseOK "{ flag = ((a >= 0) && (b <= 10)) !! (c == 1); }")
   , mkEq "parse while block"
       (Program [While (Bin Gt (Var "n") (Const 0)) (Block [AssignOp "n" Sub (Const 1)])])
       (parseOK "{ while (n > 0) { n -= 1; } }")
