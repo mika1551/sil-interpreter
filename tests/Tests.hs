@@ -7,6 +7,7 @@ import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import Interpreter
 import Json
+import JsonParser (parseJsonProgram)
 import Parser
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -21,6 +22,11 @@ parseOK source =
   case parseProgram source of
     Right program -> program
     Left err -> error ("parse failed: " ++ err)
+
+parseJsonOK :: String -> Program
+parseJsonOK source = case parseJsonProgram source of
+  Right program -> program
+  Left err -> error ("JSON parse failed: " ++ err)
 
 mkEq :: (Eq a, Show a) => String -> a -> a -> Test
 mkEq label expected actual = TestCase (assertEqual label expected actual)
@@ -145,6 +151,24 @@ jsonChecks = TestList
   , mkEq "compound assignment is expanded" "{\"assn\":{\"dst\":\"x\",\"src\":{\"binop\":\"+\",\"left\":{\"var\":\"x\"},\"right\":{\"const\":2}}}}" (programToJson (Program [AssignOp "x" Add (Const 2)]))
   , mkEq "if always has else" "{\"if\":{\"cond\":{\"const\":1},\"then\":\"skip\",\"else\":\"skip\"}}" (programToJson (Program [If (Const 1) Skip Nothing]))
   , mkBool "pretty json uses target fields" ("\"assn\"" `isInfixOf` programToPrettyJson (Program [Assign "x" (Const 5)]))
+  , mkEq "parse JSON sequence and execute it" (Right [5])
+      (runProgram [] (parseJsonOK "{\"seq\":{\"left\":{\"assn\":{\"dst\":\"x\",\"src\":{\"const\":5}}},\"right\":{\"write\":{\"var\":\"x\"}}}}"))
+  , mkEq "parse JSON control flow and nested sequence" (Right [2, 1])
+      (runProgram [] (parseJsonOK (programToJson (parseOK "{ x = 2; while (x > 0) { write(x); x -= 1; } }"))))
+  , mkEq "parse JSON do and if" (Right [1, 2])
+      (runProgram [] (parseJsonOK (programToJson (parseOK "{ x = 0; do { x += 1; write(x); } while (x < 2); if (x == 2) skip; else write(9); }"))))
+  , mkEq "parse JSON all binary operators" (programToJson (parseOK "{ write(1 + 2 - 3 * 4 / 5 % 6 == 7 != 8 < 9 <= 10 > 11 >= 12 && 13 !! 14); }"))
+      (programToJson (parseJsonOK (programToJson (parseOK "{ write(1 + 2 - 3 * 4 / 5 % 6 == 7 != 8 < 9 <= 10 > 11 >= 12 && 13 !! 14); }"))))
+  , mkEq "JSON string escapes" (Program [ReadVar "x\n\x1f600"])
+      (parseJsonOK "{\"read\":\"x\\n\\uD83D\\uDE00\"}")
+  , mkBool "reject malformed JSON" (isLeft (parseJsonProgram "{\"write\":{\"const\":1,}}"))
+  , mkBool "reject unknown statement" (isLeft (parseJsonProgram "{\"unknown\":1}"))
+  , mkBool "reject missing expression field" (isLeft (parseJsonProgram "{\"write\":{\"binop\":\"+\",\"left\":{\"const\":1}}"))
+  , mkBool "reject duplicate fields" (isLeft (parseJsonProgram "{\"assn\":{\"dst\":\"x\",\"dst\":\"y\",\"src\":{\"const\":1}}}"))
+  , mkBool "reject unknown operator" (isLeft (parseJsonProgram "{\"write\":{\"binop\":\"^\",\"left\":{\"const\":1},\"right\":{\"const\":2}}}"))
+  , mkBool "reject integer overflow" (isLeft (parseJsonProgram "{\"write\":{\"const\":999999999999999999999999999999999999}}"))
+  , mkBool "reject fractional constants" (isLeft (parseJsonProgram "{\"write\":{\"const\":1.5}}"))
+  , mkBool "reject invalid Unicode surrogate" (isLeft (parseJsonProgram "{\"read\":\"\\uD800\"}"))
   ]
 
 tests :: Test

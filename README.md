@@ -16,7 +16,7 @@ The interpreter supports a compact imperative language with integer arithmetic a
 - comments: `-- ...` and `(* ... *)`
 - empty statement: `skip`
 - runtime checks for undefined variables, exhausted input, and division by zero
-- JSON rendering of the parsed AST for inspection
+- JSON parsing and rendering of the AST
 
 The program is a block with one or more statements inside it:
 
@@ -73,6 +73,24 @@ $ cabal run sil-interpreter -- run program.sil --input 3 5 4 3
 6
 ```
 
+The `run`, `check`, and `ast` commands also accept `.json` files containing
+the JSON AST. The file extension selects the parser:
+
+```sh
+cabal run sil-interpreter -- run program.json --input 3 5 4 3
+cabal run sil-interpreter -- check program.json
+cabal run sil-interpreter -- ast program.json --pretty
+```
+
+The JSON format has a statement at its root. Statements include `"skip"`,
+`{"read":"name"}`, `{"write":expression}`,
+`{"assn":{"dst":"name","src":expression}}`, and
+`{"seq":{"left":statement,"right":statement}}`. Control flow uses `while`
+with `cond` and `body`, `do` with `body` and `cond`, or `if` with `cond`,
+`then`, and `else`. Expressions are `{"var":"name"}`, `{"const":integer}`,
+or an object with `binop`, `left`, and `right`. The `ast` command prints this
+format from either input type.
+
 Inspect the parsed AST as compact or formatted JSON:
 
 ```sh
@@ -96,7 +114,8 @@ cabal run sil-interpreter -- run program.sil -i 3,5,4,3
 
 Running the executable without arguments displays the help text.
 
-The parser is also available as `parseProgram :: String -> Either ParseError Program`.
+The parsers are also available as `parseProgram :: String -> Either ParseError Program`
+and `parseJsonProgram :: String -> Either String Program`.
 
 ## Test suite
 
@@ -118,5 +137,6 @@ The test suite covers the full implemented functionality of the interpreter:
 - runtime error handling for undefined variables, exhausted input, and division by zero
 - CLI argument parsing for `run`, `ast`, `check`, and help output
 - JSON generation for compact and pretty output
+- JSON parsing, execution, and validation
 
 This ensures the interpreter behavior stays aligned with the actual AST, parser, evaluator, and command-line interface.
