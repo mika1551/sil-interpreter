@@ -1,0 +1,76 @@
+{
+  "seq": {
+    "left": { "read": "rep" },
+    "right": {
+      "while": {
+        "cond": {
+          "binop": ">",
+          "left": { "var": "rep" },
+          "right": { "const": 0 }
+        },
+        "body": {
+          "seq": {
+            "left": {
+              "assn": {
+                "dst": "rep",
+                "src": {
+                  "binop": "-",
+                  "left": { "var": "rep" },
+                  "right": { "const": 1 }
+                }
+              }
+            },
+            "right": {
+              "seq": {
+                "left": { "read": "n" },
+                "right": {
+                  "seq": {
+                    "left": { "assn": { "dst": "f", "src": { "const": 1 } } },
+                    "right": {
+                      "seq": {
+                        "left": {
+                          "while": {
+                            "cond": {
+                              "binop": ">",
+                              "left": { "var": "n" },
+                              "right": { "const": 0 }
+                            },
+                            "body": {
+                              "seq": {
+                                "left": {
+                                  "assn": {
+                                    "dst": "f",
+                                    "src": {
+                                      "binop": "*",
+                                      "left": { "var": "f" },
+                                      "right": { "var": "n" }
+                                    }
+                                  }
+                                },
+                                "right": {
+                                  "assn": {
+                                    "dst": "n",
+                                    "src": {
+                                      "binop": "-",
+                                      "left": { "var": "n" },
+                                      "right": { "const": 1 }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "right": { "write": { "var": "f" } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -123,8 +123,12 @@ cliChecks = TestList
 
 jsonChecks :: Test
 jsonChecks = TestList
-  [ mkBool "compact json has program key" ("\"program\"" `isInfixOf` programToJson (Program [Assign "x" (Const 5)]))
-  , mkBool "pretty json has nested object" ("\"assign\"" `isInfixOf` programToPrettyJson (Program [Assign "x" (Const 5)]))
+  [ mkEq "skip is a string" "\"skip\"" (programToJson (Program [Skip]))
+  , mkEq "assignment shape" "{\"assn\":{\"dst\":\"x\",\"src\":{\"const\":5}}}" (programToJson (Program [Assign "x" (Const 5)]))
+  , mkEq "right nested sequence and block" "{\"seq\":{\"left\":{\"read\":\"x\"},\"right\":{\"seq\":{\"left\":{\"write\":{\"var\":\"x\"}},\"right\":\"skip\"}}}}" (programToJson (Program [ReadVar "x", Block [Write (Var "x"), Skip]]))
+  , mkEq "compound assignment is expanded" "{\"assn\":{\"dst\":\"x\",\"src\":{\"binop\":\"+\",\"left\":{\"var\":\"x\"},\"right\":{\"const\":2}}}}" (programToJson (Program [AssignOp "x" Add (Const 2)]))
+  , mkEq "if always has else" "{\"if\":{\"cond\":{\"const\":1},\"then\":\"skip\",\"else\":\"skip\"}}" (programToJson (Program [If (Const 1) Skip Nothing]))
+  , mkBool "pretty json uses target fields" ("\"assn\"" `isInfixOf` programToPrettyJson (Program [Assign "x" (Const 5)]))
   ]
 
 tests :: Test
