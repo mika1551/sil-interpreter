@@ -7,7 +7,7 @@ library
   hs-source-dirs:   src
   exposed-modules:  AST, CLI, Interpreter, Json, JsonParser, Parser
   default-language: Haskell2010
-  build-depends:    base >=4.14 && <5, containers, megaparsec
+  build-depends:    base >=4.14 && <5, aeson >=2.2.1 && <2.3, containers, megaparsec, scientific, text
   ghc-options:      -Wall
 
 executable sil-interpreter

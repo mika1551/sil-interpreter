@@ -165,9 +165,12 @@ jsonChecks = TestList
   , mkBool "reject unknown statement" (isLeft (parseJsonProgram "{\"unknown\":1}"))
   , mkBool "reject missing expression field" (isLeft (parseJsonProgram "{\"write\":{\"binop\":\"+\",\"left\":{\"const\":1}}"))
   , mkBool "reject duplicate fields" (isLeft (parseJsonProgram "{\"assn\":{\"dst\":\"x\",\"dst\":\"y\",\"src\":{\"const\":1}}}"))
+  , mkBool "reject escaped duplicate fields" (isLeft (parseJsonProgram "{\"assn\":{\"dst\":\"x\",\"d\\u0073t\":\"y\",\"src\":{\"const\":1}}}"))
   , mkBool "reject unknown operator" (isLeft (parseJsonProgram "{\"write\":{\"binop\":\"^\",\"left\":{\"const\":1},\"right\":{\"const\":2}}}"))
   , mkBool "reject integer overflow" (isLeft (parseJsonProgram "{\"write\":{\"const\":999999999999999999999999999999999999}}"))
   , mkBool "reject fractional constants" (isLeft (parseJsonProgram "{\"write\":{\"const\":1.5}}"))
+  , mkBool "reject decimal integer constants" (isLeft (parseJsonProgram "{\"write\":{\"const\":1.0}}"))
+  , mkBool "reject exponent constants" (isLeft (parseJsonProgram "{\"write\":{\"const\":1e0}}"))
   , mkBool "reject invalid Unicode surrogate" (isLeft (parseJsonProgram "{\"read\":\"\\uD800\"}"))
   ]
 
