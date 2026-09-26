@@ -6,10 +6,12 @@ import Control.Exception (IOException, try)
 import Data.Version (showVersion)
 import Interpreter
 import Json
+import JsonParser (parseJsonProgram)
 import Parser
 import Paths_sil_interpreter (version)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.FilePath (takeExtension)
 import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
@@ -39,7 +41,7 @@ withProgram sourceFile action = do
   sourceResult <- try (readFile sourceFile) :: IO (Either IOException String)
   case sourceResult of
     Left fileError -> failWith ("cannot read '" ++ sourceFile ++ "': " ++ show fileError)
-    Right source -> case parseProgram source of
+    Right source -> case (if takeExtension sourceFile == ".json" then parseJsonProgram else parseProgram) source of
       Left parseError -> failWith (sourceFile ++ ": " ++ parseError)
       Right program -> action program
 
