@@ -4,87 +4,69 @@ module Parser
   ) where
 
 import AST
-import Control.Applicative ((<|>))
-import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
-import Text.ParserCombinators.ReadP
-import qualified Text.ParserCombinators.ReadP as R
+import Control.Applicative (empty, optional, (<|>))
+import Control.Monad (void)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
+import Data.Void (Void)
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, many, notFollowedBy, parse, satisfy, some, try)
+import Text.Megaparsec.Char (char, space1, string)
+import qualified Text.Megaparsec.Char.Lexer as L
 
 type ParseError = String
+type Parser = Parsec Void String
 
 parseProgram :: String -> Either ParseError Program
-parseProgram source = case readP_to_S (spacesP *> programP <* spacesP <* eof) source of
-  [(program, "")] -> Right program
-  [] -> Left "syntax error"
-  _ -> Left "ambiguous syntax"
+parseProgram source = case parse (spaces *> programP <* eof) "<input>" source of
+  Left err -> Left (errorBundlePretty err)
+  Right program -> Right program
 
-programP :: ReadP Program
-programP = do
-  symbol "{"
-  statements <- many1 stmtP
-  symbol "}"
-  pure (Program statements)
+programP :: Parser Program
+programP = Program <$> between (symbol "{") (symbol "}") (some stmtP)
 
-stmtP :: ReadP Stmt
-stmtP =
-      blockP
-  <|> readP
-  <|> writeP
-  <|> ifP
-  <|> whileP
-  <|> doWhileP
-  <|> forP
-  <|> assignmentP
-  <|> skipP
+stmtP :: Parser Stmt
+stmtP = blockP <|> readP <|> writeP <|> ifP <|> whileP
+    <|> doWhileP <|> forP <|> skipP <|> assignmentP
 
-blockP :: ReadP Stmt
-blockP = do
-  symbol "{"
-  statements <- many stmtP
-  symbol "}"
-  pure (Block statements)
+blockP :: Parser Stmt
+blockP = Block <$> between (symbol "{") (symbol "}") (many stmtP)
 
-readP :: ReadP Stmt
+readP :: Parser Stmt
 readP = do
   keyword "read"
   name <- parenthesized identifier
   optionalSemicolon
   pure (ReadVar name)
 
-writeP :: ReadP Stmt
+writeP :: Parser Stmt
 writeP = do
   keyword "write"
   value <- parenthesized exprP
   optionalSemicolon
   pure (Write value)
 
-ifP :: ReadP Stmt
+ifP :: Parser Stmt
 ifP = do
   keyword "if"
   condition <- parenthesized exprP
   thenBranch <- stmtP
-  elseBranch <- elsePartP <|> pure Nothing
+  elseBranch <- optional elsePartP
   pure (If condition thenBranch elseBranch)
 
-elsePartP :: ReadP (Maybe Stmt)
-elsePartP =
-      (do
-        keyword "else"
-        Just <$> stmtP)
-  <|> (do
-        keyword "elif"
-        condition <- parenthesized exprP
-        thenBranch <- stmtP
-        rest <- elsePartP <|> pure Nothing
-        pure (Just (If condition thenBranch rest)))
+elsePartP :: Parser Stmt
+elsePartP = (keyword "else" *> stmtP) <|> do
+  keyword "elif"
+  condition <- parenthesized exprP
+  thenBranch <- stmtP
+  rest <- optional elsePartP
+  pure (If condition thenBranch rest)
 
-whileP :: ReadP Stmt
+whileP :: Parser Stmt
 whileP = do
   keyword "while"
   condition <- parenthesized exprP
-  body <- stmtP
-  pure (While condition body)
+  While condition <$> stmtP
 
-doWhileP :: ReadP Stmt
+doWhileP :: Parser Stmt
 doWhileP = do
   keyword "do"
   body <- stmtP
@@ -93,7 +75,7 @@ doWhileP = do
   optionalSemicolon
   pure (DoWhile body condition)
 
-forP :: ReadP Stmt
+forP :: Parser Stmt
 forP = do
   keyword "for"
   symbol "("
@@ -103,16 +85,12 @@ forP = do
   symbol ";"
   step <- assignmentCore
   symbol ")"
-  body <- stmtP
-  pure (For initial condition step body)
+  For initial condition step <$> stmtP
 
-assignmentP :: ReadP Stmt
-assignmentP = do
-  statement <- assignmentCore
-  optionalSemicolon
-  pure statement
+assignmentP :: Parser Stmt
+assignmentP = assignmentCore <* optionalSemicolon
 
-assignmentCore :: ReadP Stmt
+assignmentCore :: Parser Stmt
 assignmentCore = do
   name <- identifier
   operation <- assignmentOperator
@@ -121,99 +99,84 @@ assignmentCore = do
     Nothing -> Assign name expression
     Just op -> AssignOp name op expression
 
-assignmentOperator :: ReadP (Maybe BinOp)
-assignmentOperator =
-      (symbol "=" *> pure Nothing)
-  <|> (Just Add <$ symbol "+=")
-  <|> (Just Sub <$ symbol "-=")
-  <|> (Just Mul <$ symbol "*=")
-  <|> (Just Div <$ symbol "/=")
+assignmentOperator :: Parser (Maybe BinOp)
+assignmentOperator = (Nothing <$ symbol "=")
+  <|> (Just Add <$ symbol "+=") <|> (Just Sub <$ symbol "-=")
+  <|> (Just Mul <$ symbol "*=") <|> (Just Div <$ symbol "/=")
   <|> (Just Mod <$ symbol "%=")
 
-skipP :: ReadP Stmt
-skipP = do
-  keyword "skip"
-  optionalSemicolon
-  pure Skip
+skipP :: Parser Stmt
+skipP = Skip <$ (keyword "skip" *> optionalSemicolon)
 
-optionalSemicolon :: ReadP ()
-optionalSemicolon = () <$ R.optional (symbol ";")
+optionalSemicolon :: Parser ()
+optionalSemicolon = void (optional (symbol ";"))
 
-parenthesized :: ReadP a -> ReadP a
-parenthesized parser = between (symbol "(") (symbol ")") parser
+parenthesized :: Parser a -> Parser a
+parenthesized = between (symbol "(") (symbol ")")
 
-exprP :: ReadP Expr
+exprP :: Parser Expr
 exprP = orP
 
-orP :: ReadP Expr
-orP = chainl1 andP (Bin Or <$ symbol "||")
+orP :: Parser Expr
+orP = chainLeft andP (Bin Or <$ symbol "!!")
 
-andP :: ReadP Expr
-andP = chainl1 comparisonP (Bin And <$ symbol "&&")
+andP :: Parser Expr
+andP = chainLeft comparisonP (Bin And <$ symbol "&&")
 
-comparisonP :: ReadP Expr
-comparisonP = chainl1 additiveP (comparisonOperator >>= pure . Bin)
+comparisonP :: Parser Expr
+comparisonP = chainLeft additiveP (Bin <$> comparisonOperator)
 
-comparisonOperator :: ReadP BinOp
-comparisonOperator =
-      Eq <$ symbol "=="
-  <|> Neq <$ symbol "!="
-  <|> Le <$ symbol "<="
-  <|> Ge <$ symbol ">="
-  <|> Lt <$ symbol "<"
-  <|> Gt <$ symbol ">"
+comparisonOperator :: Parser BinOp
+comparisonOperator = Eq <$ symbol "==" <|> Neq <$ symbol "!="
+  <|> Le <$ symbol "<=" <|> Ge <$ symbol ">="
+  <|> Lt <$ symbol "<" <|> Gt <$ symbol ">"
 
-additiveP :: ReadP Expr
-additiveP = chainl1 multiplicativeP
-  ((Bin Add <$ symbol "+") <|> (Bin Sub <$ symbol "-"))
+additiveP :: Parser Expr
+additiveP = chainLeft multiplicativeP
+  (Bin Add <$ symbol "+" <|> Bin Sub <$ symbol "-")
 
-multiplicativeP :: ReadP Expr
-multiplicativeP = chainl1 primaryP
-  ((Bin Mul <$ symbol "*") <|> (Bin Div <$ symbol "/") <|> (Bin Mod <$ symbol "%"))
+multiplicativeP :: Parser Expr
+multiplicativeP = chainLeft primaryP
+  (Bin Mul <$ symbol "*" <|> Bin Div <$ symbol "/" <|> Bin Mod <$ symbol "%")
 
-primaryP :: ReadP Expr
-primaryP =
-      Const <$> integer
-  <|> Var <$> identifier
-  <|> parenthesized exprP
+chainLeft :: Parser a -> Parser (a -> a -> a) -> Parser a
+chainLeft operand operator = do
+  first <- operand
+  rest <- many ((,) <$> operator <*> operand)
+  pure (foldl (\left (combine, right) -> combine left right) first rest)
 
-identifier :: ReadP String
-identifier = lexeme $ do
-  first <- satisfy isAlpha <|> satisfy (== '_')
-  rest <- munch (\character -> isAlphaNum character || character == '_')
-  pure (first : rest)
+primaryP :: Parser Expr
+primaryP = Const <$> integer <|> Var <$> identifier <|> parenthesized exprP
 
-integer :: ReadP Int
+identifier :: Parser String
+identifier = lexeme $ try $ do
+  first <- satisfy isAsciiLower
+  rest <- many (satisfy identifierContinue)
+  let name = first : rest
+  if name `elem` reservedWords then empty else pure name
+
+reservedWords :: [String]
+reservedWords = ["read", "write", "if", "else", "elif", "while", "do", "for", "skip"]
+
+identifierContinue :: Char -> Bool
+identifierContinue c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '_' || c == '\''
+
+integer :: Parser Int
 integer = lexeme $ do
-  sign <- option 1 (symbolRaw "-" *> pure (-1))
-  digits <- munch1 isDigit
-  pure (sign * read digits)
+  sign <- optional (char '-')
+  digits <- some (satisfy isDigit)
+  pure $ case sign of
+    Nothing -> read digits
+    Just _ -> negate (read digits)
 
-keyword :: String -> ReadP String
-keyword name = lexeme $ do
-  value <- string name
-  next <- look
-  if null next || not (isAlphaNum (head next) || head next == '_')
-    then pure value
-    else pfail
+keyword :: String -> Parser ()
+keyword name = void (lexeme (try (string name *> notFollowedBy (satisfy identifierContinue))))
 
-symbol :: String -> ReadP String
-symbol value = lexeme (symbolRaw value)
+symbol :: String -> Parser ()
+symbol value = void (lexeme (string value))
 
-symbolRaw :: String -> ReadP String
-symbolRaw = string
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme spaces
 
-lexeme :: ReadP a -> ReadP a
-lexeme parser = parser <* spacesP
-
-spacesP :: ReadP ()
-spacesP = skipMany (satisfy isSpace <|> lineComment <|> blockComment)
-  where
-    lineComment = do
-      string "--"
-      skipMany (satisfy (/= '\n'))
-      pure ' '
-    blockComment = do
-      string "(*"
-      manyTill get (string "*)")
-      pure ' '
+spaces :: Parser ()
+spaces = L.space space1 (L.skipLineComment "--") (L.skipBlockComment "(*" "*)")

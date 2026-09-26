@@ -9,7 +9,7 @@ The interpreter supports a compact imperative language with integer arithmetic a
 - variable assignment and reassignment
 - arithmetic operators: `+`, `-`, `*`, `/`, `%`
 - comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
-- boolean operators: `&&`, `||`
+- boolean operators: `&&`, `!!`
 - input/output statements: `read`, `write`
 - flow control: `if ... else`, `while`, `do ... while`, `for`
 - blocks: `{ ... }`
@@ -57,7 +57,7 @@ This example reads numbers, computes factorials, and prints each result as a sep
 
 ## Command-line interface
 
-Install GHC and Cabal (for macOS, the usual option is GHCup), then run:
+Install GHC and Cabal (for macOS, the usual option is GHCup), then run. Cabal will fetch the Megaparsec parser dependency:
 
 ```sh
 cd sil-interpreter
