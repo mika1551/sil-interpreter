@@ -8,10 +8,13 @@ import Data.List (isInfixOf)
 import Interpreter
 import Json
 import Parser
+import System.Exit (exitFailure)
 import Test.HUnit
 
-main :: IO Counts
-main = runTestTT tests
+main :: IO ()
+main = do
+  result <- runTestTT tests
+  if errors result + failures result == 0 then pure () else exitFailure
 
 parseOK :: String -> Program
 parseOK source =
@@ -61,6 +64,19 @@ checks = TestList
   , mkEq "parse comments"
       (Program [Assign "x" (Const 5)])
       (parseOK "{ -- comment\n x = 5; (* block comment *) }")
+  , mkEq "keyword prefix and apostrophe in identifier"
+      (Program [Assign "read'value" (Const 2), Write (Var "read'value")])
+      (parseOK "{ read'value = 2; write(read'value); }")
+  , mkEq "or has lower precedence than and"
+      (Program [Write (Bin Or (Const 1) (Bin And (Const 0) (Const 1)))])
+      (parseOK "{ write(1 !! 0 && 1); }")
+  , mkBool "reject legacy or spelling" (isLeft (parseProgram "{ write(1 || 0); }"))
+  , mkBool "reject reserved word as identifier" (isLeft (parseProgram "{ if = 1; }"))
+  , mkBool "reject unclosed comment" (isLeft (parseProgram "{ skip; (* unfinished }"))
+  , mkBool "parse error includes source position"
+      (case parseProgram "{\nwrite(1 + );\n}" of
+        Left message -> "2:" `isInfixOf` message
+        Right _ -> False)
   ]
 
 runtimeChecks :: Test
