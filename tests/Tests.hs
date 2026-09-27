@@ -8,6 +8,8 @@ import Data.List (isInfixOf)
 import Interpreter
 import Json
 import JsonParser (parseJsonProgram)
+import qualified Machine as M
+import qualified MachineInterpreter as MI
 import Parser
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -174,10 +176,59 @@ jsonChecks = TestList
   , mkBool "reject invalid Unicode surrogate" (isLeft (parseJsonProgram "{\"read\":\"\\uD800\"}"))
   ]
 
+machineChecks :: Test
+machineChecks = TestList
+  [ mkEq "empty machine program" (Right []) (MI.runMachine [] (M.MachineProgram []))
+  , mkEq "machine read, store, load, and write" (Right [12])
+      (MI.runMachine [12] (M.MachineProgram
+        [M.ReadInput, M.StoreVar "x", M.LoadVar "x", M.WriteOutput]))
+  , mkEq "machine preserves binary operand order" (Right [6])
+      (MI.runMachine [] (M.MachineProgram
+        [M.PushConst 8, M.PushConst 2, M.ApplyBinOp Sub, M.WriteOutput]))
+  , mkEq "zero branch consumes condition" (Right [7])
+      (MI.runMachine [] (M.MachineProgram
+        [M.PushConst 7, M.PushConst 0, M.JumpIfZero "done", M.DefineLabel "done", M.WriteOutput]))
+  , mkEq "untaken zero branch and forward jump" (Right [10])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 1, M.JumpIfZero "otherwise", M.PushConst 10
+        , M.Jump "done", M.DefineLabel "otherwise", M.PushConst 20
+        , M.DefineLabel "done", M.WriteOutput
+        ]))
+  , mkEq "nonzero branch runs loop" (Right [3, 2, 1])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 3, M.StoreVar "x", M.DefineLabel "loop"
+        , M.LoadVar "x", M.WriteOutput, M.LoadVar "x", M.PushConst 1
+        , M.ApplyBinOp Sub, M.StoreVar "x", M.LoadVar "x"
+        , M.JumpIfNonZero "loop"
+        ]))
+  , mkEq "machine stack underflow" (Left (MI.StackUnderflow 0))
+      (MI.runMachine [] (M.MachineProgram [M.WriteOutput]))
+  , mkEq "machine undefined variable" (Left (MI.UndefinedVariable "x"))
+      (MI.runMachine [] (M.MachineProgram [M.LoadVar "x"]))
+  , mkEq "machine input exhausted" (Left MI.InputExhausted)
+      (MI.runMachine [] (M.MachineProgram [M.ReadInput]))
+  , mkEq "machine division by zero" (Left MI.DivisionByZero)
+      (MI.runMachine [] (M.MachineProgram [M.PushConst 1, M.PushConst 0, M.ApplyBinOp Div]))
+  , mkEq "machine duplicate label" (Left (MI.DuplicateLabel "here"))
+      (MI.runMachine [] (M.MachineProgram [M.DefineLabel "here", M.DefineLabel "here"]))
+  , mkEq "machine unknown label" (Left (MI.UnknownLabel "missing"))
+      (MI.runMachine [] (M.MachineProgram [M.Jump "missing"]))
+  , TestList (map matchingOperator operators)
+  ]
+  where
+    operators = [Add, Sub, Mul, Div, Mod, Eq, Neq, Lt, Le, Gt, Ge, And, Or]
+    matchingOperator op = mkEq ("machine matches direct operator " ++ show op)
+      (runProgram [] (Program [Write (Bin op (Const 8) (Const 2))]))
+      (case MI.runMachine [] (M.MachineProgram
+        [M.PushConst 8, M.PushConst 2, M.ApplyBinOp op, M.WriteOutput]) of
+        Right result -> Right result
+        Left err -> error (show err))
+
 tests :: Test
 tests = TestList
   [ TestLabel "parser" checks
   , TestLabel "runtime" runtimeChecks
   , TestLabel "cli" cliChecks
   , TestLabel "json" jsonChecks
+  , TestLabel "machine" machineChecks
   ]
