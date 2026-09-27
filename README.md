@@ -82,6 +82,17 @@ cabal run sil-interpreter -- check program.json
 cabal run sil-interpreter -- ast program.json --pretty
 ```
 
+Machine programs use `.sam` files containing JSON instruction arrays. Run or
+check one with the same commands and input option:
+
+```sh
+cabal run sil-interpreter -- run program.sam --input 3 5 4 3
+cabal run sil-interpreter -- check program.sam
+```
+
+`ast` applies only to `.sil` and `.json` files. The machine runner executes
+the instructions in a `.sam` file as written.
+
 The JSON format has a statement at its root. Statements include `"skip"`,
 `{"read":"name"}`, `{"write":expression}`,
 `{"assn":{"dst":"name","src":expression}}`, and
@@ -114,8 +125,9 @@ cabal run sil-interpreter -- run program.sil -i 3,5,4,3
 
 Running the executable without arguments displays the help text.
 
-The parsers are also available as `parseProgram :: String -> Either ParseError Program`
-and `parseJsonProgram :: String -> Either String Program`.
+The parsers are also available as `parseProgram :: String -> Either ParseError Program`,
+`parseJsonProgram :: String -> Either String Program`, and
+`parseMachine :: String -> Either String MachineProgram`.
 
 ## Test suite
 

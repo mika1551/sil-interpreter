@@ -2,6 +2,7 @@
 
 module MachineInterpreter
   ( MachineError (..)
+  , validateMachine
   , runMachine
   ) where
 
@@ -22,9 +23,17 @@ data MachineError
 
 runMachine :: [Int] -> MachineProgram -> Either MachineError [Int]
 runMachine values (MachineProgram instructions) = do
+  labels <- validatedLabels instructions
+  execute (listArray (0, length instructions - 1) instructions) labels values
+
+validateMachine :: MachineProgram -> Either MachineError ()
+validateMachine (MachineProgram instructions) = () <$ validatedLabels instructions
+
+validatedLabels :: [Instruction] -> Either MachineError (Map.Map String Int)
+validatedLabels instructions = do
   labels <- indexLabels instructions
   mapM_ (checkTarget labels) instructions
-  execute (listArray (0, length instructions - 1) instructions) labels values
+  pure labels
 
 indexLabels :: [Instruction] -> Either MachineError (Map.Map String Int)
 indexLabels instructions = foldM addLabel Map.empty (zip [0 ..] instructions)

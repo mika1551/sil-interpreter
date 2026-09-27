@@ -136,14 +136,17 @@ runtimeChecks = TestList
 cliChecks :: Test
 cliChecks = TestList
   [ mkEq "parse run command" (Right (Run "program.sil" [1, 2, 3])) (parseCommand ["run", "program.sil", "--input", "1", "2", "3"])
+  , mkEq "parse machine run command" (Right (Run "program.sam" [1, 2, 3])) (parseCommand ["run", "program.sam", "--input", "1", "2", "3"])
   , mkEq "parse comma separated input" (Right (Run "program.sil" [3, 5, 4, 3])) (parseCommand ["run", "program.sil", "-i", "3,5,4,3"])
   , mkEq "parse ast compact" (Right (Ast "program.sil" Compact)) (parseCommand ["ast", "program.sil"])
   , mkEq "parse ast pretty" (Right (Ast "program.sil" Pretty)) (parseCommand ["ast", "program.sil", "--pretty"])
   , mkEq "parse check" (Right (Check "program.sil")) (parseCommand ["check", "program.sil"])
+  , mkEq "parse machine check" (Right (Check "program.sam")) (parseCommand ["check", "program.sam"])
   , mkEq "parse help" (Right Help) (parseCommand ["--help"])
   , mkBool "parse invalid run option" (isLeft (parseCommand ["run", "program.sil", "--bogus"]))
   , mkBool "parse input requires value" (isLeft (parseCommand ["run", "program.sil", "--input"]))
   , mkBool "help text contains commands" (any (\line -> "run" `isInfixOf` trim line && "Execute" `isInfixOf` trim line) (map trim (lines helpText)))
+  , mkBool "help text mentions machine programs" (".sam" `isInfixOf` helpText)
   ]
 
 jsonChecks :: Test
@@ -214,6 +217,8 @@ machineChecks = TestList
       (MI.runMachine [] (M.MachineProgram [M.DefineLabel "here", M.DefineLabel "here"]))
   , mkEq "machine unknown label" (Left (MI.UnknownLabel "missing"))
       (MI.runMachine [] (M.MachineProgram [M.Jump "missing"]))
+  , mkEq "validate machine labels" (Left (MI.UnknownLabel "missing"))
+      (MI.validateMachine (M.MachineProgram [M.Jump "missing"]))
   , TestList (map matchingOperator operators)
   ]
   where
