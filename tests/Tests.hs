@@ -10,6 +10,7 @@ import Json
 import JsonParser (parseJsonProgram)
 import qualified Machine as M
 import qualified MachineInterpreter as MI
+import MachineParser (parseMachine)
 import Parser
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -224,6 +225,36 @@ machineChecks = TestList
         Right result -> Right result
         Left err -> error (show err))
 
+machineParserChecks :: Test
+machineParserChecks = TestList
+  [ mkEq "parse empty machine program" (Right (M.MachineProgram [])) (parseMachine "[]")
+  , mkEq "parse every machine instruction"
+      (Right (M.MachineProgram
+        [ M.ReadInput, M.WriteOutput, M.LoadVar "x", M.StoreVar "x"
+        , M.PushConst (-2), M.ApplyBinOp Add, M.DefineLabel "end"
+        , M.Jump "end", M.JumpIfZero "end", M.JumpIfNonZero "end"
+        ]))
+      (parseMachine "[\"READ\",\"WRITE\",{\"LD\":\"x\"},{\"ST\":\"x\"},{\"CONST\":-2},{\"BINOP\":\"+\"},{\"LABEL\":\"end\"},{\"JMP\":\"end\"},{\"JZ\":\"end\"},{\"JNZ\":\"end\"}]")
+  , mkEq "parsed machine program executes" (Right [9])
+      (case parseMachine "[\"READ\",{\"ST\":\"x\"},{\"LD\":\"x\"},\"WRITE\"]" of
+        Left err -> error err
+        Right program -> MI.runMachine [9] program)
+  , mkBool "reject non-array machine root" (isLeft (parseMachine "{\"CONST\":1}"))
+  , mkBool "reject unknown machine instruction" (isLeft (parseMachine "[\"PUSH\"]"))
+  , mkBool "reject missing machine operand" (isLeft (parseMachine "[\"LD\"]"))
+  , mkBool "reject extra instruction fields" (isLeft (parseMachine "[{\"LD\":\"x\",\"ST\":\"y\"}]"))
+  , mkBool "reject duplicate instruction fields" (isLeft (parseMachine "[{\"LD\":\"x\",\"LD\":\"y\"}]"))
+  , mkBool "reject unknown machine operator" (isLeft (parseMachine "[{\"BINOP\":\"^\"}]"))
+  , mkBool "reject incorrect machine operand type" (isLeft (parseMachine "[{\"JMP\":3}]"))
+  , mkBool "reject fractional machine constant" (isLeft (parseMachine "[{\"CONST\":1.5}]"))
+  , mkBool "reject decimal machine constant" (isLeft (parseMachine "[{\"CONST\":1.0}]"))
+  , mkBool "reject overflowing machine constant" (isLeft (parseMachine "[{\"CONST\":999999999999999999999999999999999999}]"))
+  , mkBool "machine parse error identifies instruction"
+      (case parseMachine "[{\"CONST\":1},{\"ST\":2}]" of
+        Left err -> "$[1].ST" `isInfixOf` err
+        Right _ -> False)
+  ]
+
 tests :: Test
 tests = TestList
   [ TestLabel "parser" checks
@@ -231,4 +262,5 @@ tests = TestList
   , TestLabel "cli" cliChecks
   , TestLabel "json" jsonChecks
   , TestLabel "machine" machineChecks
+  , TestLabel "machine parser" machineParserChecks
   ]

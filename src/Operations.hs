@@ -1,9 +1,16 @@
 module Operations
   ( OperationError (..)
   , applyBinOp
+  , parseBinOpName
   ) where
 
 import AST (BinOp (..))
+
+parseBinOpName :: String -> Maybe BinOp
+parseBinOpName name = lookup name
+  [("+", Add), ("-", Sub), ("*", Mul), ("/", Div), ("%", Mod),
+   ("==", Eq), ("!=", Neq), ("<", Lt), ("<=", Le), (">", Gt), (">=", Ge),
+   ("&&", And), ("!!", Or)]
 
 data OperationError = DivisionByZero
   deriving (Eq, Show)
