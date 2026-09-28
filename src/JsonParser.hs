@@ -6,43 +6,19 @@ module JsonParser
 
 import AST
 import Data.Aeson (Value (..), eitherDecodeStrictText)
-import qualified Data.Aeson.Decoding.Text as Decoding
-import Data.Aeson.Decoding.Tokens (Number (..), TkArray (..), TkRecord (..), Tokens (..))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Text as Text
+import JsonValidation (validateJsonSyntax)
+import Operations (parseBinOpName)
 
 parseJsonProgram :: String -> Either String Program
 parseJsonProgram source = do
   let input = Text.pack source
   value <- eitherDecodeStrictText input
-  _ <- checkValue (Decoding.textToTokens input)
+  validateJsonSyntax input
   Program <$> statementsAt "$" value
-
-checkValue :: Tokens k String -> Either String k
-checkValue token = case token of
-  TkLit _ next -> Right next
-  TkText _ next -> Right next
-  TkNumber (NumInteger _) next -> Right next
-  TkNumber _ _ -> Left "expected an integer"
-  TkArrayOpen items -> checkArray items
-  TkRecordOpen fields -> checkRecord [] fields
-  TkErr message -> Left message
-
-checkArray :: TkArray k String -> Either String k
-checkArray items = case items of
-  TkItem value -> checkValue value >>= checkArray
-  TkArrayEnd next -> Right next
-  TkArrayErr message -> Left message
-
-checkRecord :: [Key.Key] -> TkRecord k String -> Either String k
-checkRecord fields record = case record of
-  TkPair key value
-    | key `elem` fields -> Left ("duplicate JSON field " ++ show (Key.toString key))
-    | otherwise -> checkValue value >>= checkRecord (key : fields)
-  TkRecordEnd next -> Right next
-  TkRecordErr message -> Left message
 
 statementsAt :: String -> Value -> Either String [Stmt]
 statementsAt path value = case value of
@@ -89,13 +65,9 @@ expressionAt path value = case value of
   _ -> Left (path ++ ": expected an expression (var, const, or binop/left/right)")
 
 binOpAt :: String -> String -> Either String BinOp
-binOpAt path name = case lookup name operators of
+binOpAt path name = case parseBinOpName name of
   Just op -> Right op
   Nothing -> Left (path ++ ": unknown operator " ++ show name)
-  where
-    operators = [("+", Add), ("-", Sub), ("*", Mul), ("/", Div), ("%", Mod),
-      ("==", Eq), ("!=", Neq), ("<", Lt), ("<=", Le), (">", Gt), (">=", Ge),
-      ("&&", And), ("!!", Or)]
 
 stringAt :: String -> Value -> Either String String
 stringAt _ (String value) = Right (Text.unpack value)

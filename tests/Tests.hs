@@ -8,6 +8,9 @@ import Data.List (isInfixOf)
 import Interpreter
 import Json
 import JsonParser (parseJsonProgram)
+import qualified Machine as M
+import qualified MachineInterpreter as MI
+import MachineParser (parseMachine)
 import Parser
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -133,14 +136,17 @@ runtimeChecks = TestList
 cliChecks :: Test
 cliChecks = TestList
   [ mkEq "parse run command" (Right (Run "program.sil" [1, 2, 3])) (parseCommand ["run", "program.sil", "--input", "1", "2", "3"])
+  , mkEq "parse machine run command" (Right (Run "program.sam" [1, 2, 3])) (parseCommand ["run", "program.sam", "--input", "1", "2", "3"])
   , mkEq "parse comma separated input" (Right (Run "program.sil" [3, 5, 4, 3])) (parseCommand ["run", "program.sil", "-i", "3,5,4,3"])
   , mkEq "parse ast compact" (Right (Ast "program.sil" Compact)) (parseCommand ["ast", "program.sil"])
   , mkEq "parse ast pretty" (Right (Ast "program.sil" Pretty)) (parseCommand ["ast", "program.sil", "--pretty"])
   , mkEq "parse check" (Right (Check "program.sil")) (parseCommand ["check", "program.sil"])
+  , mkEq "parse machine check" (Right (Check "program.sam")) (parseCommand ["check", "program.sam"])
   , mkEq "parse help" (Right Help) (parseCommand ["--help"])
   , mkBool "parse invalid run option" (isLeft (parseCommand ["run", "program.sil", "--bogus"]))
   , mkBool "parse input requires value" (isLeft (parseCommand ["run", "program.sil", "--input"]))
   , mkBool "help text contains commands" (any (\line -> "run" `isInfixOf` trim line && "Execute" `isInfixOf` trim line) (map trim (lines helpText)))
+  , mkBool "help text mentions machine programs" (".sam" `isInfixOf` helpText)
   ]
 
 jsonChecks :: Test
@@ -174,10 +180,92 @@ jsonChecks = TestList
   , mkBool "reject invalid Unicode surrogate" (isLeft (parseJsonProgram "{\"read\":\"\\uD800\"}"))
   ]
 
+machineChecks :: Test
+machineChecks = TestList
+  [ mkEq "empty machine program" (Right []) (MI.runMachine [] (M.MachineProgram []))
+  , mkEq "machine read, store, load, and write" (Right [12])
+      (MI.runMachine [12] (M.MachineProgram
+        [M.ReadInput, M.StoreVar "x", M.LoadVar "x", M.WriteOutput]))
+  , mkEq "machine preserves binary operand order" (Right [6])
+      (MI.runMachine [] (M.MachineProgram
+        [M.PushConst 8, M.PushConst 2, M.ApplyBinOp Sub, M.WriteOutput]))
+  , mkEq "zero branch consumes condition" (Right [7])
+      (MI.runMachine [] (M.MachineProgram
+        [M.PushConst 7, M.PushConst 0, M.JumpIfZero "done", M.DefineLabel "done", M.WriteOutput]))
+  , mkEq "untaken zero branch and forward jump" (Right [10])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 1, M.JumpIfZero "otherwise", M.PushConst 10
+        , M.Jump "done", M.DefineLabel "otherwise", M.PushConst 20
+        , M.DefineLabel "done", M.WriteOutput
+        ]))
+  , mkEq "nonzero branch runs loop" (Right [3, 2, 1])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 3, M.StoreVar "x", M.DefineLabel "loop"
+        , M.LoadVar "x", M.WriteOutput, M.LoadVar "x", M.PushConst 1
+        , M.ApplyBinOp Sub, M.StoreVar "x", M.LoadVar "x"
+        , M.JumpIfNonZero "loop"
+        ]))
+  , mkEq "machine stack underflow" (Left (MI.StackUnderflow 0))
+      (MI.runMachine [] (M.MachineProgram [M.WriteOutput]))
+  , mkEq "machine undefined variable" (Left (MI.UndefinedVariable "x"))
+      (MI.runMachine [] (M.MachineProgram [M.LoadVar "x"]))
+  , mkEq "machine input exhausted" (Left MI.InputExhausted)
+      (MI.runMachine [] (M.MachineProgram [M.ReadInput]))
+  , mkEq "machine division by zero" (Left MI.DivisionByZero)
+      (MI.runMachine [] (M.MachineProgram [M.PushConst 1, M.PushConst 0, M.ApplyBinOp Div]))
+  , mkEq "machine duplicate label" (Left (MI.DuplicateLabel "here"))
+      (MI.runMachine [] (M.MachineProgram [M.DefineLabel "here", M.DefineLabel "here"]))
+  , mkEq "machine unknown label" (Left (MI.UnknownLabel "missing"))
+      (MI.runMachine [] (M.MachineProgram [M.Jump "missing"]))
+  , mkEq "validate machine labels" (Left (MI.UnknownLabel "missing"))
+      (MI.validateMachine (M.MachineProgram [M.Jump "missing"]))
+  , TestList (map matchingOperator operators)
+  ]
+  where
+    operators = [Add, Sub, Mul, Div, Mod, Eq, Neq, Lt, Le, Gt, Ge, And, Or]
+    matchingOperator op = mkEq ("machine matches direct operator " ++ show op)
+      (runProgram [] (Program [Write (Bin op (Const 8) (Const 2))]))
+      (case MI.runMachine [] (M.MachineProgram
+        [M.PushConst 8, M.PushConst 2, M.ApplyBinOp op, M.WriteOutput]) of
+        Right result -> Right result
+        Left err -> error (show err))
+
+machineParserChecks :: Test
+machineParserChecks = TestList
+  [ mkEq "parse empty machine program" (Right (M.MachineProgram [])) (parseMachine "[]")
+  , mkEq "parse every machine instruction"
+      (Right (M.MachineProgram
+        [ M.ReadInput, M.WriteOutput, M.LoadVar "x", M.StoreVar "x"
+        , M.PushConst (-2), M.ApplyBinOp Add, M.DefineLabel "end"
+        , M.Jump "end", M.JumpIfZero "end", M.JumpIfNonZero "end"
+        ]))
+      (parseMachine "[\"READ\",\"WRITE\",{\"LD\":\"x\"},{\"ST\":\"x\"},{\"CONST\":-2},{\"BINOP\":\"+\"},{\"LABEL\":\"end\"},{\"JMP\":\"end\"},{\"JZ\":\"end\"},{\"JNZ\":\"end\"}]")
+  , mkEq "parsed machine program executes" (Right [9])
+      (case parseMachine "[\"READ\",{\"ST\":\"x\"},{\"LD\":\"x\"},\"WRITE\"]" of
+        Left err -> error err
+        Right program -> MI.runMachine [9] program)
+  , mkBool "reject non-array machine root" (isLeft (parseMachine "{\"CONST\":1}"))
+  , mkBool "reject unknown machine instruction" (isLeft (parseMachine "[\"PUSH\"]"))
+  , mkBool "reject missing machine operand" (isLeft (parseMachine "[\"LD\"]"))
+  , mkBool "reject extra instruction fields" (isLeft (parseMachine "[{\"LD\":\"x\",\"ST\":\"y\"}]"))
+  , mkBool "reject duplicate instruction fields" (isLeft (parseMachine "[{\"LD\":\"x\",\"LD\":\"y\"}]"))
+  , mkBool "reject unknown machine operator" (isLeft (parseMachine "[{\"BINOP\":\"^\"}]"))
+  , mkBool "reject incorrect machine operand type" (isLeft (parseMachine "[{\"JMP\":3}]"))
+  , mkBool "reject fractional machine constant" (isLeft (parseMachine "[{\"CONST\":1.5}]"))
+  , mkBool "reject decimal machine constant" (isLeft (parseMachine "[{\"CONST\":1.0}]"))
+  , mkBool "reject overflowing machine constant" (isLeft (parseMachine "[{\"CONST\":999999999999999999999999999999999999}]"))
+  , mkBool "machine parse error identifies instruction"
+      (case parseMachine "[{\"CONST\":1},{\"ST\":2}]" of
+        Left err -> "$[1].ST" `isInfixOf` err
+        Right _ -> False)
+  ]
+
 tests :: Test
 tests = TestList
   [ TestLabel "parser" checks
   , TestLabel "runtime" runtimeChecks
   , TestLabel "cli" cliChecks
   , TestLabel "json" jsonChecks
+  , TestLabel "machine" machineChecks
+  , TestLabel "machine parser" machineParserChecks
   ]

@@ -6,6 +6,7 @@ module Interpreter
 
 import AST
 import qualified Data.Map.Strict as Map
+import qualified Operations
 
 data Runtime = Runtime
   { variables :: Map.Map String Int
@@ -75,14 +76,6 @@ truthy :: Int -> Bool
 truthy value = value /= 0
 
 apply :: BinOp -> Int -> Int -> Either StateError Int
-apply op left right = case op of
-  Add -> Right (left + right); Sub -> Right (left - right); Mul -> Right (left * right)
-  Div -> if right == 0 then Left DivisionByZero else Right (left `div` right)
-  Mod -> if right == 0 then Left DivisionByZero else Right (left `mod` right)
-  Eq -> boolean (left == right); Neq -> boolean (left /= right)
-  Lt -> boolean (left < right); Le -> boolean (left <= right)
-  Gt -> boolean (left > right); Ge -> boolean (left >= right)
-  And -> boolean (truthy left && truthy right)
-  Or -> boolean (truthy left || truthy right)
-  where
-    boolean condition = Right (if condition then 1 else 0)
+apply op left right = case Operations.applyBinOp op left right of
+  Left Operations.DivisionByZero -> Left DivisionByZero
+  Right value -> Right value
