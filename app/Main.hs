@@ -2,6 +2,7 @@ module Main (main) where
 
 import AST (Program)
 import CLI
+import Compiler (compileProgram)
 import Control.Exception (IOException, try)
 import Data.Version (showVersion)
 import Interpreter
@@ -31,19 +32,34 @@ executeCommand command = case command of
   Version -> putStrLn ("sil-interpreter " ++ showVersion version)
   Run sourceFile inputValues
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
-        case Machine.runMachine inputValues program of
-          Left runtimeError -> failWith (renderMachineError runtimeError)
-          Right valuesWritten -> mapM_ print valuesWritten
+        runMachineAndPrint inputValues program
     | otherwise -> withProgram sourceFile $ \program ->
         case runProgram inputValues program of
           Left runtimeError -> failWith (renderRuntimeError runtimeError)
           Right valuesWritten -> mapM_ print valuesWritten
+  RunMachine sourceFile inputValues
+    | takeExtension sourceFile == ".sam" -> withMachine sourceFile $
+        runMachineAndPrint inputValues
+    | otherwise -> withProgram sourceFile $
+        runMachineAndPrint inputValues . compileProgram
   Ast sourceFile _ | takeExtension sourceFile == ".sam" ->
     failWith "ast expects a .sil or .json file"
   Ast sourceFile format -> withProgram sourceFile $ \program ->
     putStrLn $ case format of
       Compact -> programToJson program
       Pretty -> programToPrettyJson program
+  Compile sourceFile outputFile
+    | takeExtension sourceFile == ".sam" ->
+        failWith "compile expects a .sil or .json file"
+    | otherwise -> withProgram sourceFile $ \program -> do
+        let result = machineToPrettyJson (compileProgram program) ++ "\n"
+        case outputFile of
+          Nothing -> putStr result
+          Just path -> do
+            writeResult <- try (writeFile path result) :: IO (Either IOException ())
+            case writeResult of
+              Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
+              Right () -> pure ()
   Check sourceFile
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         case Machine.validateMachine program of
@@ -63,6 +79,12 @@ withMachine sourceFile action = withSource sourceFile $ \source ->
   case parseMachine source of
     Left parseError -> failWith (sourceFile ++ ": " ++ parseError)
     Right program -> action program
+
+runMachineAndPrint :: [Int] -> MachineProgram -> IO ()
+runMachineAndPrint inputValues program =
+  case Machine.runMachine inputValues program of
+    Left runtimeError -> failWith (renderMachineError runtimeError)
+    Right valuesWritten -> mapM_ print valuesWritten
 
 withSource :: FilePath -> (String -> IO ()) -> IO ()
 withSource sourceFile action = do

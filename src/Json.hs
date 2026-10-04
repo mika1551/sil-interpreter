@@ -1,11 +1,14 @@
 module Json
   ( programToJson
   , programToPrettyJson
+  , machineToJson
+  , machineToPrettyJson
   ) where
 
 import Data.Char (ord)
 import AST
 import Data.List (intercalate)
+import Machine (Instruction (..), MachineProgram (..))
 import Numeric (showHex)
 
 programToJson :: Program -> String
@@ -14,10 +17,33 @@ programToJson = renderCompact . programJson
 programToPrettyJson :: Program -> String
 programToPrettyJson = renderPretty 0 . programJson
 
+machineToJson :: MachineProgram -> String
+machineToJson = renderCompact . machineJson
+
+machineToPrettyJson :: MachineProgram -> String
+machineToPrettyJson = renderPretty 0 . machineJson
+
 data JsonValue
   = JsonObject [(String, JsonValue)]
+  | JsonArray [JsonValue]
   | JsonString String
   | JsonNumber Int
+
+machineJson :: MachineProgram -> JsonValue
+machineJson (MachineProgram instructions) = JsonArray (map instructionJson instructions)
+
+instructionJson :: Instruction -> JsonValue
+instructionJson instruction = case instruction of
+  ReadInput -> string "READ"
+  WriteOutput -> string "WRITE"
+  LoadVar name -> object [("LD", string name)]
+  StoreVar name -> object [("ST", string name)]
+  PushConst value -> object [("CONST", JsonNumber value)]
+  ApplyBinOp op -> object [("BINOP", string (binOpName op))]
+  DefineLabel name -> object [("LABEL", string name)]
+  Jump name -> object [("JMP", string name)]
+  JumpIfZero name -> object [("JZ", string name)]
+  JumpIfNonZero name -> object [("JNZ", string name)]
 
 programJson :: Program -> JsonValue
 programJson (Program statements) = sequenceJson statements
@@ -62,6 +88,7 @@ string = JsonString
 renderCompact :: JsonValue -> String
 renderCompact value = case value of
   JsonObject fields -> "{" ++ intercalate "," (map renderField fields) ++ "}"
+  JsonArray values -> "[" ++ intercalate "," (map renderCompact values) ++ "]"
   JsonString text -> renderString text
   JsonNumber number -> show number
   where
@@ -73,6 +100,10 @@ renderPretty level value = case value of
   JsonObject fields -> "{\n" ++ intercalate ",\n" (map renderField fields) ++ "\n" ++ indentation level ++ "}"
     where
       renderField (key, fieldValue) = indentation (level + 1) ++ renderString key ++ ": " ++ renderPretty (level + 1) fieldValue
+  JsonArray [] -> "[]"
+  JsonArray values -> "[\n" ++ intercalate ",\n" (map renderElement values) ++ "\n" ++ indentation level ++ "]"
+    where
+      renderElement element = indentation (level + 1) ++ renderPretty (level + 1) element
   JsonString text -> renderString text
   JsonNumber number -> show number
 
