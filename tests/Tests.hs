@@ -2,6 +2,7 @@ module Main (main) where
 
 import AST
 import CLI
+import Compiler (compileProgram)
 import Data.Char (isSpace)
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
@@ -136,14 +137,20 @@ runtimeChecks = TestList
 cliChecks :: Test
 cliChecks = TestList
   [ mkEq "parse run command" (Right (Run "program.sil" [1, 2, 3])) (parseCommand ["run", "program.sil", "--input", "1", "2", "3"])
+  , mkEq "parse machine mode before input" (Right (RunMachine "program.sil" [1, 2, 3])) (parseCommand ["run", "program.sil", "--machine", "--input", "1", "2", "3"])
+  , mkEq "parse machine mode after input" (Right (RunMachine "program.json" [1, 2, 3])) (parseCommand ["run", "program.json", "--input", "1", "2", "3", "--machine"])
+  , mkEq "parse machine mode without input" (Right (RunMachine "program.sil" [])) (parseCommand ["run", "program.sil", "--machine"])
   , mkEq "parse machine run command" (Right (Run "program.sam" [1, 2, 3])) (parseCommand ["run", "program.sam", "--input", "1", "2", "3"])
   , mkEq "parse comma separated input" (Right (Run "program.sil" [3, 5, 4, 3])) (parseCommand ["run", "program.sil", "-i", "3,5,4,3"])
   , mkEq "parse ast compact" (Right (Ast "program.sil" Compact)) (parseCommand ["ast", "program.sil"])
   , mkEq "parse ast pretty" (Right (Ast "program.sil" Pretty)) (parseCommand ["ast", "program.sil", "--pretty"])
   , mkEq "parse check" (Right (Check "program.sil")) (parseCommand ["check", "program.sil"])
   , mkEq "parse machine check" (Right (Check "program.sam")) (parseCommand ["check", "program.sam"])
+  , mkEq "parse compile to stdout" (Right (Compile "program.sil" Nothing)) (parseCommand ["compile", "program.sil"])
+  , mkEq "parse compile to file" (Right (Compile "program.sil" (Just "program.sam"))) (parseCommand ["compile", "program.sil", "-o", "program.sam"])
   , mkEq "parse help" (Right Help) (parseCommand ["--help"])
   , mkBool "parse invalid run option" (isLeft (parseCommand ["run", "program.sil", "--bogus"]))
+  , mkBool "reject repeated machine flag" (isLeft (parseCommand ["run", "program.sil", "--machine", "--machine"]))
   , mkBool "parse input requires value" (isLeft (parseCommand ["run", "program.sil", "--input"]))
   , mkBool "help text contains commands" (any (\line -> "run" `isInfixOf` trim line && "Execute" `isInfixOf` trim line) (map trim (lines helpText)))
   , mkBool "help text mentions machine programs" (".sam" `isInfixOf` helpText)
@@ -260,6 +267,48 @@ machineParserChecks = TestList
         Right _ -> False)
   ]
 
+compilerChecks :: Test
+compilerChecks = TestList
+  [ mkEq "skip compiles to an empty machine" (M.MachineProgram []) (compileProgram (Program [Skip]))
+  , mkEq "straight-line compilation follows stack operand order"
+      (M.MachineProgram [M.ReadInput, M.StoreVar "x", M.LoadVar "x", M.PushConst 2,
+                         M.ApplyBinOp Sub, M.StoreVar "x", M.LoadVar "x", M.WriteOutput])
+      (compileProgram (parseOK "{ read(x); x -= 2; write(x); }"))
+  , mkEq "compiled instructions round-trip through SAM JSON"
+      (Right (compileProgram (parseOK "{ if (1) write(2); else write(3); }")))
+      (parseMachine (machineToJson (compileProgram (parseOK "{ if (1) write(2); else write(3); }"))))
+  , mkEq "compiled expression keeps eager boolean evaluation"
+      (Left MI.DivisionByZero)
+      (MI.runMachine [] (compileProgram (parseOK "{ write(0 && (1 / 0)); }")))
+  , TestList (map matches directCases)
+  , TestList (map matchesWithInput inputCases)
+  ]
+  where
+    directCases =
+      [ "{ if (0) write(1); else write(2); }"
+      , "{ if (1) write(1); else write(2); }"
+      , "{ if (0) write(1); }"
+      , "{ x = 0; while (x < 3) { write(x); x += 1; } }"
+      , "{ x = 0; do { write(x); x += 1; } while (x < 3); }"
+      , "{ for (i = 0; i < 3; i += 1) write(i); }"
+      , "{ x = 2; while (x > 0) { y = 2; while (y > 0) { write(x * y); y -= 1; } x -= 1; } }"
+      ]
+    inputCases =
+      [ ([4, 5], "{ read(x); read(y); if (x < y) write(y); else write(x); }")
+      , ([0], "{ read(x); if (x) write(1); else write(2); }")
+      ]
+    matches source = matchesWithInput ([], source)
+    matchesWithInput (values, source) =
+      let ast = parseOK source
+          machine = compileProgram ast
+      in TestList
+        [ mkEq ("valid labels: " ++ source) (Right ()) (MI.validateMachine machine)
+        , mkEq ("same output: " ++ source) (runProgram values ast)
+            (case MI.runMachine values machine of
+              Right result -> Right result
+              Left err -> error (show err))
+        ]
+
 tests :: Test
 tests = TestList
   [ TestLabel "parser" checks
@@ -268,4 +317,5 @@ tests = TestList
   , TestLabel "json" jsonChecks
   , TestLabel "machine" machineChecks
   , TestLabel "machine parser" machineParserChecks
+  , TestLabel "compiler" compilerChecks
   ]

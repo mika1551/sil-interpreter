@@ -9,7 +9,9 @@ import Data.List (intercalate)
 
 data Command
   = Run FilePath [Int]
+  | RunMachine FilePath [Int]
   | Ast FilePath JsonFormat
+  | Compile FilePath (Maybe FilePath)
   | Check FilePath
   | Help
   | Version
@@ -27,14 +29,19 @@ parseCommand arguments = case arguments of
   ["--version"] -> Right Version
   "run" : rest -> parseRun rest
   "ast" : rest -> parseAst rest
+  "compile" : rest -> parseCompile rest
   ["check", sourceFile] -> Right (Check sourceFile)
   "check" : _ -> Left "usage: sil-interpreter check <file>"
   command : _ -> Left ("unknown command '" ++ command ++ "'")
 
 parseRun :: [String] -> Either String Command
 parseRun arguments = case arguments of
-  [] -> Left "usage: sil-interpreter run <file> [--input <integers...>]"
-  sourceFile : options -> Run sourceFile <$> parseRunOptions options
+  [] -> Left "usage: sil-interpreter run <file> [--machine] [--input <integers...>]"
+  sourceFile : options -> do
+    let machineFlags = length (filter (== "--machine") options)
+    if machineFlags > 1 then Left "--machine may only be specified once" else do
+      values <- parseRunOptions (filter (/= "--machine") options)
+      pure (if machineFlags == 1 then RunMachine sourceFile values else Run sourceFile values)
 
 parseRunOptions :: [String] -> Either String [Int]
 parseRunOptions options = case options of
@@ -61,6 +68,13 @@ parseAst arguments = case arguments of
   [] -> Left "usage: sil-interpreter ast <file> [--pretty]"
   _ : option : _ -> Left ("unknown ast option '" ++ option ++ "'")
 
+parseCompile :: [String] -> Either String Command
+parseCompile arguments = case arguments of
+  [sourceFile] -> Right (Compile sourceFile Nothing)
+  [sourceFile, "-o", outputFile] -> Right (Compile sourceFile (Just outputFile))
+  [sourceFile, "--output", outputFile] -> Right (Compile sourceFile (Just outputFile))
+  _ -> Left "usage: sil-interpreter compile <file.sil|file.json> [-o <file.sam>]"
+
 prefixOf :: String -> String -> Bool
 prefixOf prefix value = take (length prefix) value == prefix
 
@@ -74,8 +88,9 @@ helpText = intercalate "\n"
   [ "SIL interpreter"
   , ""
   , "Usage:"
-  , "  sil-interpreter run <file> [--input <integers...>]"
+  , "  sil-interpreter run <file> [--machine] [--input <integers...>]"
   , "  sil-interpreter ast <file> [--pretty]"
+  , "  sil-interpreter compile <file.sil|file.json> [-o <file.sam>]"
   , "  sil-interpreter check <file>"
   , "  sil-interpreter --help"
   , "  sil-interpreter --version"
@@ -83,10 +98,12 @@ helpText = intercalate "\n"
   , "Commands:"
   , "  run    Execute a .sil, .json, or .sam program and print its output."
   , "  ast    Print a .sil or .json program as JSON."
+  , "  compile  Translate a .sil or .json program to .sam instructions."
   , "  check  Validate a .sil, .json, or .sam program."
   , ""
   , "Options:"
   , "  -i, --input <values>  Integers consumed by read; commas are optional."
+  , "      --machine         Compile .sil or .json and run it on the machine."
   , "      --pretty          Pretty-print JSON produced by ast."
   , "  -h, --help            Show this help."
   , "      --version         Show the version."
