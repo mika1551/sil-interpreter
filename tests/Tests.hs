@@ -270,6 +270,24 @@ machineParserChecks = TestList
 compilerChecks :: Test
 compilerChecks = TestList
   [ mkEq "skip compiles to an empty machine" (M.MachineProgram []) (compileProgram (Program [Skip]))
+  , mkEq "if without else falls through without an unconditional jump"
+      (M.MachineProgram [M.PushConst 1, M.JumpIfZero "L_end_0",
+                         M.PushConst 2, M.WriteOutput, M.DefineLabel "L_end_0"])
+      (compileProgram (Program [If (Const 1) (Write (Const 2)) Nothing]))
+  , mkEq "empty then branch reverses the conditional jump"
+      (M.MachineProgram [M.PushConst 0, M.JumpIfNonZero "L_end_0",
+                         M.PushConst 2, M.WriteOutput, M.DefineLabel "L_end_0"])
+      (compileProgram (Program [If (Const 0) Skip (Just (Write (Const 2)))]))
+  , mkEq "empty branches still evaluate the condition"
+      (Left MI.DivisionByZero)
+      (MI.runMachine [] (compileProgram
+        (Program [If (Bin Div (Const 1) (Const 0)) Skip (Just Skip)])))
+  , mkEq "nested if uses its loop continuation"
+      (M.MachineProgram [M.Jump "L_while_cond_1", M.DefineLabel "L_while_cody_0",
+                         M.LoadVar "y", M.JumpIfZero "L_while_cond_1",
+                         M.PushConst 1, M.WriteOutput, M.DefineLabel "L_while_cond_1",
+                         M.LoadVar "x", M.JumpIfNonZero "L_while_cody_0"])
+      (compileProgram (Program [While (Var "x") (If (Var "y") (Write (Const 1)) Nothing)]))
   , mkEq "straight-line compilation follows stack operand order"
       (M.MachineProgram [M.ReadInput, M.StoreVar "x", M.LoadVar "x", M.PushConst 2,
                          M.ApplyBinOp Sub, M.StoreVar "x", M.LoadVar "x", M.WriteOutput])
@@ -288,10 +306,12 @@ compilerChecks = TestList
       [ "{ if (0) write(1); else write(2); }"
       , "{ if (1) write(1); else write(2); }"
       , "{ if (0) write(1); }"
+      , "{ if (0) skip; else write(2); }"
       , "{ x = 0; while (x < 3) { write(x); x += 1; } }"
       , "{ x = 0; do { write(x); x += 1; } while (x < 3); }"
       , "{ for (i = 0; i < 3; i += 1) write(i); }"
       , "{ x = 2; while (x > 0) { y = 2; while (y > 0) { write(x * y); y -= 1; } x -= 1; } }"
+      , "{ x = 2; while (x) { x -= 1; if (x) write(x); } }"
       ]
     inputCases =
       [ ([4, 5], "{ read(x); read(y); if (x < y) write(y); else write(x); }")

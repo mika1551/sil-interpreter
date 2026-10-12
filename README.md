@@ -115,12 +115,15 @@ It emits `CONST` or `LD` for expression leaves, then evaluates binary operands
 left to right before `BINOP`. Each statement consumes any value it produces:
 `READ` is followed by `ST`, and `write` ends with `WRITE`. Compound assignments
 load the old value before evaluating the right operand. `if` uses `JZ` to
-select the else branch; loops use `JNZ` to repeat while their condition is
-nonzero. `for` compiles as initialization followed by a `while` whose body
-ends with the step. Generated labels have unique numeric suffixes, so nested
-control flow cannot reuse a target. The resulting instruction sequence may
-use different label names from the example `.sam` files while behaving the
-same way.
+select the else branch when both branches contain code. If the then branch
+is empty, it uses `JNZ` to skip the else branch; if the else branch is empty,
+it omits the jump after the then branch. Nested statements can use their
+enclosing statement's exit label. Loops use `JNZ` to repeat while their
+condition is nonzero. `for` compiles as initialization followed by a `while`
+whose body ends with the step. Generated labels have unique numeric suffixes,
+so nested control flow cannot reuse a target. The resulting instruction
+sequence may use different label names from the example `.sam` files while
+behaving the same way.
 
 `ast` applies only to `.sil` and `.json` files. The machine runner executes
 the instructions in a `.sam` file as written.
