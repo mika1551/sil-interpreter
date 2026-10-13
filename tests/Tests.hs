@@ -274,11 +274,17 @@ compilerChecks = TestList
       (M.MachineProgram [M.PushConst 1, M.JumpIfZero "L_end_0",
                          M.PushConst 2, M.WriteOutput, M.DefineLabel "L_end_0"])
       (compileProgram (Program [If (Const 1) (Write (Const 2)) Nothing]))
-  , mkEq "empty then branch reverses the conditional jump"
-      (M.MachineProgram [M.PushConst 0, M.JumpIfNonZero "L_end_0",
+  , mkEq "skip then branch retains the explicit else"
+      (M.MachineProgram [M.PushConst 0, M.JumpIfZero "L_else_1",
+                         M.Jump "L_end_0", M.DefineLabel "L_else_1",
                          M.PushConst 2, M.WriteOutput, M.DefineLabel "L_end_0"])
       (compileProgram (Program [If (Const 0) Skip (Just (Write (Const 2)))]))
-  , mkEq "empty branches still evaluate the condition"
+  , mkEq "skip else branch retains the explicit else"
+      (M.MachineProgram [M.PushConst 1, M.JumpIfZero "L_else_1",
+                         M.PushConst 2, M.WriteOutput, M.Jump "L_end_0",
+                         M.DefineLabel "L_else_1", M.DefineLabel "L_end_0"])
+      (compileProgram (Program [If (Const 1) (Write (Const 2)) (Just Skip)]))
+  , mkEq "skip branches still evaluate the condition"
       (Left MI.DivisionByZero)
       (MI.runMachine [] (compileProgram
         (Program [If (Bin Div (Const 1) (Const 0)) Skip (Just Skip)])))
