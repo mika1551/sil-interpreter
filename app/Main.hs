@@ -1,9 +1,10 @@
 module Main (main) where
 
-import AST (Program)
+import AST (Program (..), Stmt (..), Expr (..))
 import CLI
 import Compiler (compileProgram)
 import Control.Exception (IOException, try)
+import Data.List (intercalate)
 import Data.Version (showVersion)
 import Interpreter
 import Json
@@ -34,32 +35,39 @@ executeCommand command = case command of
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         runMachineAndPrint inputValues program
     | otherwise -> withProgram sourceFile $ \program ->
-        case runProgram inputValues program of
+        case runProgramValues inputValues program of
           Left runtimeError -> failWith (renderRuntimeError runtimeError)
-          Right valuesWritten -> mapM_ print valuesWritten
+          Right valuesWritten -> mapM_ (putStrLn . renderOutputValue) valuesWritten
   RunMachine sourceFile inputValues
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $
         runMachineAndPrint inputValues
-    | otherwise -> withProgram sourceFile $
-        runMachineAndPrint inputValues . compileProgram
+    | otherwise -> withProgram sourceFile $ \program ->
+        if usesExtendedFeatures program
+          then failWith "machine execution does not yet support strings and arrays"
+          else runMachineAndPrint inputValues (compileProgram program)
   Ast sourceFile _ | takeExtension sourceFile == ".sam" ->
     failWith "ast expects a .sil or .json file"
   Ast sourceFile format -> withProgram sourceFile $ \program ->
-    putStrLn $ case format of
-      Compact -> programToJson program
-      Pretty -> programToPrettyJson program
+    if usesExtendedFeatures program
+      then failWith "JSON output does not yet support strings and arrays"
+      else putStrLn $ case format of
+        Compact -> programToJson program
+        Pretty -> programToPrettyJson program
   Compile sourceFile outputFile
     | takeExtension sourceFile == ".sam" ->
         failWith "compile expects a .sil or .json file"
     | otherwise -> withProgram sourceFile $ \program -> do
-        let result = machineToPrettyJson (compileProgram program) ++ "\n"
-        case outputFile of
-          Nothing -> putStr result
-          Just path -> do
-            writeResult <- try (writeFile path result) :: IO (Either IOException ())
-            case writeResult of
-              Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
-              Right () -> pure ()
+        if usesExtendedFeatures program
+          then failWith "machine compilation does not yet support strings and arrays"
+          else do
+            let result = machineToPrettyJson (compileProgram program) ++ "\n"
+            case outputFile of
+              Nothing -> putStr result
+              Just path -> do
+                writeResult <- try (writeFile path result) :: IO (Either IOException ())
+                case writeResult of
+                  Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
+                  Right () -> pure ()
   Check sourceFile
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         case Machine.validateMachine program of
@@ -98,6 +106,41 @@ renderRuntimeError runtimeError = case runtimeError of
   UndefinedVariable name -> "runtime error: undefined variable '" ++ name ++ "'"
   InputExhausted -> "runtime error: input exhausted"
   DivisionByZero -> "runtime error: division by zero"
+  TypeError message -> "runtime error: " ++ message
+  IndexOutOfBounds index size -> "runtime error: index " ++ show index ++ " out of bounds for length " ++ show size
+  InvalidCharacter code -> "runtime error: invalid character code " ++ show code
+  CyclicOutput -> "runtime error: cannot print a cyclic array"
+
+renderOutputValue :: OutputValue -> String
+renderOutputValue value = case value of
+  OutputNumber n -> show n
+  OutputString text -> text
+  OutputArray values -> "[" ++ intercalate "; " (map renderOutputValue values) ++ "]"
+
+usesExtendedFeatures :: Program -> Bool
+usesExtendedFeatures (Program statements) = any extendedStmt statements
+  where
+    extendedStmt statement = case statement of
+      ReadVar _ -> False
+      Write expression -> extendedExpr expression
+      Assign _ expression -> extendedExpr expression
+      AssignOp _ _ expression -> extendedExpr expression
+      SetIndex _ _ _ -> True
+      SetIndexOp _ _ _ _ -> True
+      While condition body -> extendedExpr condition || extendedStmt body
+      DoWhile body condition -> extendedStmt body || extendedExpr condition
+      For initial condition step body -> any extendedStmt [initial, step, body] || extendedExpr condition
+      If condition thenBranch elseBranch -> extendedExpr condition || extendedStmt thenBranch || maybe False extendedStmt elseBranch
+      Block statements' -> any extendedStmt statements'
+      Skip -> False
+    extendedExpr expression = case expression of
+      Var _ -> False
+      Const _ -> False
+      Bin _ left right -> extendedExpr left || extendedExpr right
+      StringLiteral _ -> True
+      ArrayLiteral _ -> True
+      Index _ _ -> True
+      Length _ -> True
 
 renderMachineError :: MachineError -> String
 renderMachineError machineError = case machineError of

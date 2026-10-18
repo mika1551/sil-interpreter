@@ -13,18 +13,25 @@ data Stmt
   | Write Expr
   | Assign String Expr
   | AssignOp String BinOp Expr
+  | SetIndex Expr Expr Expr
+  | SetIndexOp Expr Expr BinOp Expr
   | While Expr Stmt
   | DoWhile Stmt Expr
   | For Stmt Expr Stmt Stmt
   | If Expr Stmt (Maybe Stmt)
   | Block [Stmt]
   | Skip
+  
   deriving (Eq, Show)
 
 data Expr
   = Var String
   | Const Int
   | Bin BinOp Expr Expr
+  | StringLiteral String
+  | ArrayLiteral [Expr]
+  | Index Expr Expr
+  | Length Expr
   deriving (Eq, Show)
 
 data BinOp
