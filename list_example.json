@@ -1,0 +1,38 @@
+{
+"seq": {
+  "left": { "read": "a" },
+  "right": {
+    "seq": {
+      "left": { "assn": { "dst": "head", "src": { "var": "a" } } },
+      "right": {
+        "while": {
+          "cond": {
+            "binop": "!=",
+            "left": { "elem": { "var": "head" }, "index": { "const": 0 } },
+            "right": { "const": 0 }
+          },
+          "body": {
+            "seq": {
+              "left": {
+                "write": {
+                  "elem": { "var": "head" },
+                  "index": { "const": 1 }
+                }
+              },
+              "right": {
+                "assn": {
+                  "dst": "head",
+                  "src": {
+                    "elem": { "var": "head" },
+                    "index": { "const": 2 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+}

@@ -6,11 +6,13 @@ module Interpreter
   , StateError (..)
   , runProgram
   , runProgramValues
+  , runProgramInput
   ) where
 
 import AST
 import Control.Monad (foldM)
 import Data.Char (chr, ord)
+import Input (InputValue (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Operations
@@ -33,7 +35,7 @@ data OutputValue
 
 data Runtime = Runtime
   { variables :: Map.Map String Value
-  , input :: [Int]
+  , input :: [Value]
   , output :: [Value]
   , heap :: Map.Map Int HeapObject
   , nextAddress :: Int
@@ -56,16 +58,32 @@ runProgram values program = runProgramValues values program >>= traverse numberO
     numberOutput _ = Left (TypeError "integer output expected; use runProgramValues")
 
 runProgramValues :: [Int] -> Program -> Either StateError [OutputValue]
-runProgramValues values (Program statements) = do
-  let initial = Runtime Map.empty values [] Map.empty 0
+runProgramValues values = runProgramInput (map InputNumber values)
+
+runProgramInput :: [InputValue] -> Program -> Either StateError [OutputValue]
+runProgramInput values (Program statements) = do
+  let (inputs, allocated) = allocateInputs (Runtime Map.empty [] [] Map.empty 0) values
+      initial = allocated { input = inputs }
   finalState <- execute initial (Block statements)
   traverse (resolveOutput finalState Set.empty) (reverse (output finalState))
+
+allocateInputs :: Runtime -> [InputValue] -> ([Value], Runtime)
+allocateInputs state [] = ([], state)
+allocateInputs state (value : rest) =
+  let (stored, next) = case value of
+        InputNumber number -> (Number number, state)
+        InputString text -> allocate state (StringObject text)
+        InputArray elements ->
+          let (items, afterItems) = allocateInputs state elements
+          in allocate afterItems (ArrayObject items)
+      (remaining, final) = allocateInputs next rest
+  in (stored : remaining, final)
 
 execute :: Runtime -> Stmt -> Either StateError Runtime
 execute state statement = case statement of
   ReadVar name -> case input state of
     [] -> Left InputExhausted
-    value : rest -> Right state { variables = Map.insert name (Number value) (variables state), input = rest }
+    value : rest -> Right state { variables = Map.insert name value (variables state), input = rest }
   Write expression -> do
     (value, next) <- evaluate state expression
     Right next { output = value : output next }

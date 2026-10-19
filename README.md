@@ -137,6 +137,11 @@ with `cond` and `body`, `do` with `body` and `cond`, or `if` with `cond`,
 or an object with `binop`, `left`, and `right`. The `ast` command prints this
 format from either input type.
 
+Array elements can be read in JSON expressions with
+`{"elem":{"var":"a"},"index":{"const":0}}`. Indexes start at zero.
+Array indexing currently runs through the direct interpreter; machine
+execution, compilation, and AST JSON output do not yet support it.
+
 Inspect the parsed AST as compact or formatted JSON:
 
 ```sh
@@ -157,6 +162,34 @@ that are consumed by `read` statements in order. These are equivalent:
 cabal run sil-interpreter -- run program.sil --input 3 5 4 3
 cabal run sil-interpreter -- run program.sil -i 3,5,4,3
 ```
+
+Input values can also be JSON strings or JSON-style arrays containing integers,
+strings, and other arrays, including empty arrays. Quote each array to protect
+brackets and spaces from the shell.
+Each top-level value is consumed by one `read`; an array is a single value:
+
+```sh
+cabal run sil-interpreter -- run list_example.json --input '[1, 10, [1, 20, [0]]]'
+```
+
+This linked-list example prints `10` and `20`. Scalars and arrays can be mixed,
+for example `--input 3 '[4, 5]' '[]'`. String and array inputs require the direct
+interpreter; `.sam` files and `--machine` accept integers only.
+
+For string input, keep the JSON double quotes inside shell single quotes.
+For example, save `{ read(text); write(text); }` as `echo.sil`, then run:
+
+```sh
+cabal run sil-interpreter -- run echo.sil --input '"hello world"'
+```
+
+This prints `hello world`. Empty strings (`'""'`), Unicode text, and JSON
+escapes such as `\n`, `\"`, `\\`, and `\u0041` are supported. Strings can
+also appear in arrays, for example `--input '["hello", ["world", 42]]'`.
+Each top-level string is consumed by one `read`, just like an array or integer.
+
+The library provides `Input.parseInputValues` and
+`runProgramInput :: [InputValue] -> Program -> Either StateError [OutputValue]`.
 
 Running the executable without arguments displays the help text.
 

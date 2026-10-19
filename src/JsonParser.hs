@@ -56,13 +56,17 @@ expressionAt :: String -> Value -> Either String Expr
 expressionAt path value = case value of
   Object fields | Just name <- onlyField "var" fields -> Var <$> stringAt (path ++ ".var") name
   Object fields | Just number <- onlyField "const" fields -> Const <$> intAt (path ++ ".const") number
+  Object fields | sameKeys ["elem", "index"] fields -> do
+    target <- fieldAt path "elem" fields
+    index <- fieldAt path "index" fields
+    Index <$> expressionAt (path ++ ".elem") target <*> expressionAt (path ++ ".index") index
   Object fields | sameKeys ["binop", "left", "right"] fields -> do
     opValue <- fieldAt path "binop" fields
     leftValue <- fieldAt path "left" fields
     rightValue <- fieldAt path "right" fields
     op <- stringAt (path ++ ".binop") opValue >>= binOpAt (path ++ ".binop")
     Bin op <$> expressionAt (path ++ ".left") leftValue <*> expressionAt (path ++ ".right") rightValue
-  _ -> Left (path ++ ": expected an expression (var, const, or binop/left/right)")
+  _ -> Left (path ++ ": expected an expression (var, const, elem/index, or binop/left/right)")
 
 binOpAt :: String -> String -> Either String BinOp
 binOpAt path name = case parseBinOpName name of

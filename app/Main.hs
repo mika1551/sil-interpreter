@@ -31,6 +31,12 @@ executeCommand :: Command -> IO ()
 executeCommand command = case command of
   Help -> putStrLn helpText
   Version -> putStrLn ("sil-interpreter " ++ showVersion version)
+  RunValues sourceFile inputValues
+    | takeExtension sourceFile == ".sam" -> failWith "machine execution does not support string or array inputs"
+    | otherwise -> withProgram sourceFile $ \program ->
+        case runProgramInput inputValues program of
+          Left runtimeError -> failWith (renderRuntimeError runtimeError)
+          Right valuesWritten -> mapM_ (putStrLn . renderOutputValue) valuesWritten
   Run sourceFile inputValues
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         runMachineAndPrint inputValues program

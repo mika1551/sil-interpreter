@@ -7,6 +7,7 @@ import Data.Char (isSpace)
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import Interpreter
+import Input (InputValue (..), parseInputValues)
 import Json
 import JsonParser (parseJsonProgram)
 import qualified Machine as M
@@ -187,6 +188,122 @@ jsonChecks = TestList
   , mkBool "reject invalid Unicode surrogate" (isLeft (parseJsonProgram "{\"read\":\"\\uD800\"}"))
   ]
 
+arrayInputChecks :: Test
+arrayInputChecks = TestList
+  [ mkEq "parse nested array and mixed scalar inputs"
+      (Right [InputArray [InputNumber 1, InputArray [InputNumber (-2)], InputArray []], InputNumber 3])
+      (parseInputValues ["[1, [-2], []]", "3"])
+  , mkEq "parse empty array with surrounding whitespace"
+      (Right [InputArray []]) (parseInputValues ["  [ ]  "])
+  , mkEq "parse array split across arguments"
+      (Right [InputArray [InputNumber 1, InputNumber 2]]) (parseInputValues ["[1,", "2]"])
+  , mkEq "array input CLI command"
+      (Right (RunValues "list_example.json" [InputArray [InputNumber 0]]))
+      (parseCommand ["run", "list_example.json", "--input=[0]"])
+  , mkBool "machine rejects array input"
+      (isLeft (parseCommand ["run", "program.json", "--machine", "-i", "[1]"]))
+  , TestList [mkBool ("reject invalid array input: " ++ source) (isLeft (parseInputValues [source]))
+      | source <- ["", "[", "[1,]", "[1 2]", "[1;2]", "[1,,2]", "[1.5]", "[1e0]", "[true]", "[1]junk", "1,", "1,,2", "999999999999999999999999999999999999"]]
+  , mkEq "JSON indexing expression"
+      (Right (Program [Write (Index (Var "a") (Const 0))]))
+      (parseJsonProgram "{\"write\":{\"elem\":{\"var\":\"a\"},\"index\":{\"const\":0}}}")
+  , mkBool "JSON index error includes path"
+      (case parseJsonProgram "{\"write\":{\"elem\":{\"var\":\"a\"},\"index\":false}}" of
+        Left err -> "$.write.index" `isInfixOf` err
+        Right _ -> False)
+  , mkBool "JSON indexing rejects extra fields"
+      (isLeft (parseJsonProgram "{\"write\":{\"elem\":{\"var\":\"a\"},\"index\":{\"const\":0},\"extra\":0}}"))
+  , mkEq "read nested array followed by integer"
+      (Right [OutputNumber 7, OutputArray [OutputNumber 2], OutputNumber 9])
+      (runProgramInput [InputArray [InputNumber 7, InputArray [InputNumber 2]], InputNumber 9]
+        (Program [ReadVar "a", ReadVar "b", Write (Index (Var "a") (Const 0)),
+                  Write (Index (Var "a") (Const 1)), Write (Var "b")]))
+  , mkEq "read arrays preserve aliasing and independent allocations"
+      (Right [OutputArray [OutputNumber 8], OutputArray [OutputNumber 1]])
+      (runProgramInput [InputArray [InputNumber 1], InputArray [InputNumber 1]]
+        (Program [ReadVar "a", ReadVar "b", Assign "alias" (Var "a"),
+                  SetIndex (Var "alias") (Const 0) (Const 8), Write (Var "a"), Write (Var "b")]))
+  , mkEq "empty array is one input value"
+      (Left InputExhausted)
+      (runProgramInput [InputArray []] (Program [ReadVar "a", ReadVar "b"]))
+  , mkEq "array input bounds check"
+      (Left (IndexOutOfBounds 0 0))
+      (runProgramInput [InputArray []] (Program [ReadVar "a", Write (Index (Var "a") (Const 0))]))
+  , mkEq "traverse nested list input"
+      (Right [OutputNumber 10, OutputNumber 20])
+      (runProgramInput [InputArray [InputNumber 1, InputNumber 10,
+        InputArray [InputNumber 1, InputNumber 20, InputArray [InputNumber 0]]]]
+        (parseJsonOK listProgram))
+  ]
+  where
+    listProgram = "{\"seq\":{\"left\":{\"read\":\"head\"},\"right\":{\"while\":{"
+      ++ "\"cond\":{\"binop\":\"!=\",\"left\":{\"elem\":{\"var\":\"head\"},\"index\":{\"const\":0}},\"right\":{\"const\":0}},"
+      ++ "\"body\":{\"seq\":{\"left\":{\"write\":{\"elem\":{\"var\":\"head\"},\"index\":{\"const\":1}}},"
+      ++ "\"right\":{\"assn\":{\"dst\":\"head\",\"src\":{\"elem\":{\"var\":\"head\"},\"index\":{\"const\":2}}}}}}}}}}"
+
+stringInputChecks :: Test
+stringInputChecks = TestList
+  [ mkEq "parse string with whitespace and input delimiters"
+      (Right [InputString " hello, [world] ", InputNumber 7])
+      (parseInputValues ["\" hello, [world] \"", "7"])
+  , mkEq "parse empty string and comma separated strings"
+      (Right [InputString "", InputString "next"])
+      (parseInputValues ["\"\",\"next\""])
+  , mkEq "parse JSON string escapes"
+      (Right [InputString "\"\\/\b\f\n\r\tA"])
+      (parseInputValues ["\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0041\""])
+  , mkEq "parse Unicode and surrogate pair escapes"
+      (Right [InputString "Привет 😀", InputString "😀"])
+      (parseInputValues ["\"Привет 😀\"", "\"\\uD83D\\uDE00\""])
+  , mkEq "parse strings nested in mixed arrays"
+      (Right [InputArray [InputString "hello", InputArray [InputString "", InputNumber 42]]])
+      (parseInputValues ["[\"hello\", [\"\", 42]]"])
+  , TestList [mkEq ("string input CLI option " ++ option)
+      (Right (RunValues "echo.sil" [InputString "hello world"]))
+      (parseCommand (["run", "echo.sil", option] ++ values))
+      | (option, values) <- [("--input", ["\"hello world\""]), ("-i", ["\"hello world\""]),
+                             ("--input=\"hello world\"", [])]]
+  , mkEq "quoted flag remains string input"
+      (Right (RunValues "echo.sil" [InputString "--machine"]))
+      (parseCommand ["run", "echo.sil", "-i", "\"--machine\""])
+  , TestList [mkEq "machine rejects string inputs"
+      (Left "machine execution does not support string or array inputs")
+      (parseCommand ["run", "echo.sil", "--machine", "-i", source])
+      | source <- ["\"hello\"", "[\"hello\"]"]]
+  , TestList [mkBool ("reject invalid string input: " ++ show source)
+      (isLeft (parseInputValues [source]))
+      | source <- ["hello", "\"unterminated", "\"trailing\\", "\"\\q\"", "\"\\uZZZZ\"",
+                   "\"\\uD800\"", "\"\\uDE00\"", "\"line\nbreak\"", "\"tab\there\"",
+                   "\"x\"junk", "\"a\"\"b\"", "[\"a\" \"b\"]"]]
+  , mkEq "read and write string input through SIL"
+      (Right [OutputString "hello world", OutputNumber 7])
+      (runProgramInput [InputString "hello world", InputNumber 7]
+        (parseOK "{ read(text); write(text); read(n); write(n); }"))
+  , mkEq "read string and index through JSON"
+      (Right [OutputNumber 65])
+      (runProgramInput [InputString "ABC"]
+        (parseJsonOK "{\"seq\":{\"left\":{\"read\":\"s\"},\"right\":{\"write\":{\"elem\":{\"var\":\"s\"},\"index\":{\"const\":0}}}}}"))
+  , mkEq "input strings support length, indexing, mutation, and aliasing"
+      (Right [OutputNumber 2, OutputNumber 65, OutputString "ZB", OutputString "AB"])
+      (runProgramInput [InputString "AB", InputString "AB"]
+        (Program [ReadVar "a", ReadVar "b", Assign "alias" (Var "a"),
+                  Write (Length (Var "a")), Write (Index (Var "a") (Const 0)),
+                  SetIndex (Var "alias") (Const 0) (Const 90), Write (Var "a"), Write (Var "b")]))
+  , mkEq "nested string inputs are allocated independently"
+      (Right [OutputArray [OutputString "Z", OutputArray [OutputString "A"]]])
+      (runProgramInput [InputArray [InputString "A", InputArray [InputString "A"]]]
+        (Program [ReadVar "a", SetIndex (Index (Var "a") (Const 0)) (Const 0) (Const 90),
+                  Write (Var "a")]))
+  , mkEq "empty string is one input value"
+      (Right [OutputString "", OutputNumber 1])
+      (runProgramInput [InputString "", InputNumber 1]
+        (parseOK "{ read(s); write(s); read(n); write(n); }"))
+  , mkEq "string input bounds check"
+      (Left (IndexOutOfBounds 0 0))
+      (runProgramInput [InputString ""]
+        (Program [ReadVar "s", Write (Index (Var "s") (Const 0))]))
+  ]
+
 machineChecks :: Test
 machineChecks = TestList
   [ mkEq "empty machine program" (Right []) (MI.runMachine [] (M.MachineProgram []))
@@ -335,6 +452,8 @@ tests = TestList
   , TestLabel "runtime" runtimeChecks
   , TestLabel "cli" cliChecks
   , TestLabel "json" jsonChecks
+  , TestLabel "array input" arrayInputChecks
+  , TestLabel "string input" stringInputChecks
   , TestLabel "machine" machineChecks
   , TestLabel "machine parser" machineParserChecks
   , TestLabel "compiler" compilerChecks
