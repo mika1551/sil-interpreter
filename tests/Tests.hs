@@ -212,6 +212,47 @@ arrayInputChecks = TestList
       (case parseJsonProgram "{\"write\":{\"elem\":{\"var\":\"a\"},\"index\":false}}" of
         Left err -> "$.write.index" `isInfixOf` err
         Right _ -> False)
+  , TestList [mkEq ("JSON length executes for " ++ show inputValue)
+      (Right [OutputNumber size])
+      (runProgramInput [inputValue]
+        (parseJsonOK "{\"seq\":{\"left\":{\"read\":\"a\"},\"right\":{\"write\":{\"length\":{\"var\":\"a\"}}}}}"))
+      | (inputValue, size) <- [(InputArray [InputNumber 1, InputArray []], 2),
+                          (InputArray [], 0), (InputString "Привет 😀", 8), (InputString "", 0)]]
+  , mkEq "JSON length of indexed value in arithmetic"
+      (Right [OutputNumber 4])
+      (runProgramInput [InputArray [InputString "abc"]]
+        (parseJsonOK ("{\"seq\":{\"left\":{\"read\":\"a\"},\"right\":{\"write\":{\"binop\":\"+\","
+          ++ "\"left\":{\"length\":{\"elem\":{\"var\":\"a\"},\"index\":{\"const\":0}}},\"right\":{\"const\":1}}}}}")))
+  , mkBool "JSON length error includes operand path"
+      (case parseJsonProgram "{\"write\":{\"length\":false}}" of
+        Left err -> "$.write.length" `isInfixOf` err
+        Right _ -> False)
+  , mkBool "JSON length rejects extra fields"
+      (isLeft (parseJsonProgram "{\"write\":{\"length\":{\"var\":\"a\"},\"extra\":0}}"))
+  , mkEq "JSON nested array literals evaluate expressions in order"
+      (Right [OutputArray [OutputNumber 7, OutputArray [OutputNumber 3], OutputArray []]])
+      (runProgramInput [InputNumber 7]
+        (parseJsonOK ("{\"seq\":{\"left\":{\"read\":\"a\"},\"right\":{\"write\":{\"array\":["
+          ++ "{\"var\":\"a\"},{\"array\":[{\"binop\":\"+\",\"left\":{\"const\":1},\"right\":{\"const\":2}}]},"
+          ++ "{\"array\":[]}]}}}}")))
+  , mkEq "JSON length of an array literal"
+      (Right [OutputNumber 2])
+      (runProgramInput []
+        (parseJsonOK "{\"write\":{\"length\":{\"array\":[{\"const\":1},{\"array\":[]}]}}}"))
+  , mkEq "JSON indexing an array literal"
+      (Right [OutputNumber 9])
+      (runProgramInput []
+        (parseJsonOK "{\"write\":{\"elem\":{\"array\":[{\"const\":9}]},\"index\":{\"const\":0}}}"))
+  , mkBool "JSON array rejects non-array payload with path"
+      (case parseJsonProgram "{\"write\":{\"array\":false}}" of
+        Left err -> "$.write.array: expected an array" `isInfixOf` err
+        Right _ -> False)
+  , mkBool "JSON nested array error includes element path"
+      (case parseJsonProgram "{\"write\":{\"array\":[{\"const\":1},{\"array\":[false]}]}}" of
+        Left err -> "$.write.array[1].array[0]" `isInfixOf` err
+        Right _ -> False)
+  , mkBool "JSON array rejects extra fields"
+      (isLeft (parseJsonProgram "{\"write\":{\"array\":[],\"extra\":0}}"))
   , mkBool "JSON indexing rejects extra fields"
       (isLeft (parseJsonProgram "{\"write\":{\"elem\":{\"var\":\"a\"},\"index\":{\"const\":0},\"extra\":0}}"))
   , mkEq "read nested array followed by integer"

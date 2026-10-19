@@ -1,30 +1,92 @@
 {
-"seq": {
-  "left": { "read": "a" },
-  "right": {
-    "seq": {
-      "left": { "assn": { "dst": "head", "src": { "var": "a" } } },
-      "right": {
-        "while": {
-          "cond": {
-            "binop": "!=",
-            "left": { "elem": { "var": "head" }, "index": { "const": 0 } },
-            "right": { "const": 0 }
-          },
-          "body": {
-            "seq": {
-              "left": {
-                "write": {
-                  "elem": { "var": "head" },
-                  "index": { "const": 1 }
-                }
-              },
-              "right": {
-                "assn": {
-                  "dst": "head",
-                  "src": {
-                    "elem": { "var": "head" },
-                    "index": { "const": 2 }
+  "seq": {
+    "left": { "read": "a" },
+    "right": {
+      "seq": {
+        "left": { "read": "b" },
+        "right": {
+          "seq": {
+            "left": { "assn": { "dst": "n", "src": { "const": 0 } } },
+            "right": {
+              "seq": {
+                "left": {
+                  "while": {
+                    "cond": {
+                      "binop": "&&",
+                      "left": {
+                        "binop": "<",
+                        "left": { "var": "n" },
+                        "right": { "length": { "var": "a" } }
+                      },
+                      "right": {
+                        "binop": "<",
+                        "left": { "var": "n" },
+                        "right": { "length": { "var": "b" } }
+                      }
+                    },
+                    "body": {
+                      "assn": {
+                        "dst": "n",
+                        "src": {
+                          "binop": "+",
+                          "left": { "var": "n" },
+                          "right": { "const": 1 }
+                        }
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "seq": {
+                    "left": {
+                      "assn": { "dst": "result", "src": { "const": 0 } }
+                    },
+                    "right": {
+                      "seq": {
+                        "left": {
+                          "while": {
+                            "cond": { "var": "n" },
+                            "body": {
+                              "seq": {
+                                "left": {
+                                  "assn": {
+                                    "dst": "n",
+                                    "src": {
+                                      "binop": "-",
+                                      "left": { "var": "n" },
+                                      "right": { "const": 1 }
+                                    }
+                                  }
+                                },
+                                "right": {
+                                  "assn": {
+                                    "dst": "result",
+                                    "src": {
+                                      "array": [
+                                        {
+                                          "array": [
+                                            {
+                                              "elem": { "var": "a" },
+                                              "index": { "var": "n" }
+                                            },
+                                            {
+                                              "elem": { "var": "b" },
+                                              "index": { "var": "n" }
+                                            }
+                                          ]
+                                        },
+                                        { "var": "result" }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "right": { "write": { "var": "result" } }
+                      }
+                    }
                   }
                 }
               }
@@ -34,5 +96,4 @@
       }
     }
   }
-}
 }

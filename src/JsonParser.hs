@@ -8,6 +8,7 @@ import AST
 import Data.Aeson (Value (..), eitherDecodeStrictText)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Foldable (toList)
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Text as Text
 import JsonValidation (validateJsonSyntax)
@@ -56,6 +57,8 @@ expressionAt :: String -> Value -> Either String Expr
 expressionAt path value = case value of
   Object fields | Just name <- onlyField "var" fields -> Var <$> stringAt (path ++ ".var") name
   Object fields | Just number <- onlyField "const" fields -> Const <$> intAt (path ++ ".const") number
+  Object fields | Just target <- onlyField "length" fields -> Length <$> expressionAt (path ++ ".length") target
+  Object fields | Just elements <- onlyField "array" fields -> ArrayLiteral <$> arrayAt (path ++ ".array") elements
   Object fields | sameKeys ["elem", "index"] fields -> do
     target <- fieldAt path "elem" fields
     index <- fieldAt path "index" fields
@@ -66,7 +69,13 @@ expressionAt path value = case value of
     rightValue <- fieldAt path "right" fields
     op <- stringAt (path ++ ".binop") opValue >>= binOpAt (path ++ ".binop")
     Bin op <$> expressionAt (path ++ ".left") leftValue <*> expressionAt (path ++ ".right") rightValue
-  _ -> Left (path ++ ": expected an expression (var, const, elem/index, or binop/left/right)")
+  _ -> Left (path ++ ": expected an expression (var, const, length, array, elem/index, or binop/left/right)")
+
+arrayAt :: String -> Value -> Either String [Expr]
+arrayAt path (Array values) = traverse parseElement (zip [0 :: Int ..] (toList values))
+  where
+    parseElement (index, value) = expressionAt (path ++ "[" ++ show index ++ "]") value
+arrayAt path _ = Left (path ++ ": expected an array")
 
 binOpAt :: String -> String -> Either String BinOp
 binOpAt path name = case parseBinOpName name of

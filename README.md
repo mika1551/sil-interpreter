@@ -142,6 +142,17 @@ Array elements can be read in JSON expressions with
 Array indexing currently runs through the direct interpreter; machine
 execution, compilation, and AST JSON output do not yet support it.
 
+The JSON expression `{"length":{"var":"a"}}` returns the number of elements
+in an array or characters in a string. Its operand can be any expression,
+including an indexed value. Like indexing, length currently runs through the
+direct interpreter only; compilation and AST JSON output do not yet support it.
+
+Array literals use `{"array":[expression, ...]}`, for example
+`{"array":[{"const":1},{"const":2}]}`. Elements are evaluated in order and
+can include nested arrays; `{"array":[]}` creates an empty array. Array
+literals also require the direct interpreter and are not yet supported by
+compilation or AST JSON output.
+
 Inspect the parsed AST as compact or formatted JSON:
 
 ```sh
@@ -169,10 +180,11 @@ brackets and spaces from the shell.
 Each top-level value is consumed by one `read`; an array is a single value:
 
 ```sh
-cabal run sil-interpreter -- run list_example.json --input '[1, 10, [1, 20, [0]]]'
+cabal run sil-interpreter -- run list_example.json --input '[1, 2, 3]' '[10, 20]'
 ```
 
-This linked-list example prints `10` and `20`. Scalars and arrays can be mixed,
+This example pairs elements up to the shorter array's length and prints the
+linked list `[[1; 10]; [[2; 20]; 0]]`. Scalars and arrays can be mixed,
 for example `--input 3 '[4, 5]' '[]'`. String and array inputs require the direct
 interpreter; `.sam` files and `--machine` accept integers only.
 
