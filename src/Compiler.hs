@@ -1,4 +1,4 @@
-module Compiler (compileProgram) where
+module Compiler (compileProgram, compileExpr) where
 
 import AST
 import Machine

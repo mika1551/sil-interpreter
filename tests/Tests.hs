@@ -15,6 +15,7 @@ import qualified MachineInterpreter as MI
 import MachineParser (parseMachine)
 import Parser
 import System.Exit (exitFailure)
+import TaggedExpr (evalCompiled, runTagged)
 import Test.HUnit
 
 main :: IO ()
@@ -457,4 +458,35 @@ tests = TestList
   , TestLabel "machine" machineChecks
   , TestLabel "machine parser" machineParserChecks
   , TestLabel "compiler" compilerChecks
+  , TestLabel "tagged expressions" taggedExprChecks
+  ]
+
+taggedExprChecks :: Test
+taggedExprChecks = TestList
+  [ mkEq "tagged expression: a plus one"
+      (Right (9, [M.LoadVar "a", M.PushConst 1, M.ApplyBinOp Add], 9))
+      (runTagged "[2,\"+\",[1,\"a\"],[0,1]]" "[1,[\"a\",8],[0]]")
+  , mkEq "tagged expression: direct and machine"
+      (Right (19,
+        [ M.LoadVar "a", M.PushConst 5, M.ApplyBinOp Mul
+        , M.PushConst 0, M.PushConst 1, M.ApplyBinOp Sub, M.ApplyBinOp Add
+        ], 19))
+      (runTagged
+        "[2,\"+\",[2,\"*\",[1,\"a\"],[0,5]],[2,\"-\",[0,0],[0,1]]]"
+        "[1,[\"a\",4],[0]]")
+  , mkEq "tagged expression: subtraction order"
+      (Right (-1, [M.PushConst 0, M.PushConst 1, M.ApplyBinOp Sub], -1))
+      (runTagged "[2,\"-\",[0,0],[0,1]]" "[0]")
+  , mkEq "tagged expression: first state binding wins"
+      (Right (4, [M.LoadVar "a"], 4))
+      (runTagged "[1,\"a\"]" "[1,[\"a\",4],[1,[\"a\",8],[0]]]")
+  , mkBool "tagged expression: malformed tree rejected"
+      (isLeft (runTagged "[2,\"+\",[0,1]]" "[0]"))
+  , mkBool "tagged expression: undefined variable"
+      (isLeft (runTagged "[1,\"missing\"]" "[0]"))
+  , mkBool "tagged expression: division by zero"
+      (isLeft (runTagged "[2,\"/\",[0,1],[0,0]]" "[0]"))
+  , mkEq "tagged expression: machine rejects arrays"
+      (Left "only integer expressions are supported")
+      (evalCompiled [] (ArrayLiteral [Const 1]))
   ]

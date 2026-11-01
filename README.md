@@ -191,6 +191,28 @@ Each top-level string is consumed by one `read`, just like an array or integer.
 The library provides `Input.parseInputValues` and
 `runProgramInput :: [InputValue] -> Program -> Either StateError [OutputValue]`.
 
+## Tagged expressions
+
+`TaggedExpr.runTagged` accepts a JSON expression with tags `0` (constant),
+`1` (variable), or `2` (binary operation), plus an associative list of
+integer variables. The list uses `[1, [name, value], rest]` for a binding and
+`[0]` for its end. It evaluates the expression directly and through the
+existing compiler and stack machine, returning both results and the expression
+instructions.
+
+```sh
+cabal repl lib:sil-interpreter
+```
+
+```haskell
+import TaggedExpr
+runTagged "[2,\"+\",[2,\"*\",[1,\"a\"],[0,5]],[2,\"-\",[0,0],[0,1]]]" "[1,[\"a\",4],[0]]"
+```
+
+Both results are `19`. The direct evaluator and machine runner reuse the
+project's existing numeric semantics, including undefined-variable and
+division-by-zero errors.
+
 Running the executable without arguments displays the help text.
 
 The parsers are also available as `parseProgram :: String -> Either ParseError Program`,
