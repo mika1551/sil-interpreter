@@ -6,6 +6,7 @@ Starter project for a coursework interpreter implemented through an AST.
 
 The interpreter supports a compact imperative language with integer arithmetic and control flow:
 
+- strings, nested array literals, indexing, indexed assignment, and `.length`
 - variable assignment and reassignment
 - arithmetic operators: `+`, `-`, `*`, `/`, `%`
 - comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
@@ -111,7 +112,7 @@ cabal run sil-interpreter -- compile program.json
 ```
 
 The compiler is also available as `compileProgram :: Program -> MachineProgram`.
-It emits `CONST` or `LD` for expression leaves, then evaluates binary operands
+It emits `CONST` or `LD` for numeric expression leaves, then evaluates binary operands
 left to right before `BINOP`. Each statement consumes any value it produces:
 `READ` is followed by `ST`, and `write` ends with `WRITE`. Compound assignments
 load the old value before evaluating the right operand. `if` uses `JZ` to
@@ -137,21 +138,47 @@ with `cond` and `body`, `do` with `body` and `cond`, or `if` with `cond`,
 or an object with `binop`, `left`, and `right`. The `ast` command prints this
 format from either input type.
 
-Array elements can be read in JSON expressions with
-`{"elem":{"var":"a"},"index":{"const":0}}`. Indexes start at zero.
-Array indexing currently runs through the direct interpreter; machine
-execution, compilation, and AST JSON output do not yet support it.
+Strings and arrays work in SIL, the JSON AST, and compiled SAM programs:
 
-The JSON expression `{"length":{"var":"a"}}` returns the number of elements
-in an array or characters in a string. Its operand can be any expression,
-including an indexed value. Like indexing, length currently runs through the
-direct interpreter only; compilation and AST JSON output do not yet support it.
+```sil
+{
+    text = "hello";
+    text[0] = 72;
+    values = [text, [1, 2], []];
+    values[1][0] += 9;
+    write(text);              -- Hello
+    write(values[1]);         -- [10; 2]
+    write(values.length);     -- 3
+}
+```
 
-Array literals use `{"array":[expression, ...]}`, for example
-`{"array":[{"const":1},{"const":2}]}`. Elements are evaluated in order and
-can include nested arrays; `{"array":[]}` creates an empty array. Array
-literals also require the direct interpreter and are not yet supported by
-compilation or AST JSON output.
+Indexing starts at zero. String elements are Unicode character codes; assigning
+an element requires a valid Unicode scalar value. `.length` counts array elements
+or Unicode characters. Strings use JSON
+escapes, including `\n`, `\"`, `\\`, and `\u0041`. Arrays can contain any supported
+value. Assignment copies a reference, so mutations are visible through aliases.
+Each literal evaluation allocates a new object. `+` concatenates arrays into a
+new array, preserving references to nested objects. `write` resolves references
+at program completion, matching the direct interpreter; cyclic arrays produce
+an error.
+
+The JSON expression forms are `{"string":"hello"}`,
+`{"array":[expression, ...]}`, `{"elem":expression,"index":expression}`, and
+`{"length":expression}`. Indexed writes use
+`{"setindex":{"target":expression,"index":expression,"value":expression}}`;
+compound writes use `setindexop` with the same fields plus `"op":"+"` (or
+another supported assignment operator). Both compact and pretty AST output
+support these forms.
+
+The compiler follows the instruction names in `examples/abstract_machine.txt`:
+`STRING text` allocates a string; `ARRAY n` pops the last `n` values into an
+array in evaluation order; `LENGTH` replaces an object with its length;
+`ELEM` pops an index and object and pushes the element; `SET` pops a value,
+index, and object and updates that element without pushing a result. In SAM
+JSON these are `{"STRING":"text"}`, `{"ARRAY":2}`, `"LENGTH"`, `"ELEM"`, and
+`"SET"`. Indexed compound assignments use generated temporary variables whose
+names cannot collide with program variables. Bounds, types, and character codes
+are checked at runtime.
 
 Inspect the parsed AST as compact or formatted JSON:
 
@@ -185,8 +212,7 @@ cabal run sil-interpreter -- run list_example.json --input '[1, 2, 3]' '[10, 20]
 
 This example pairs elements up to the shorter array's length and prints the
 linked list `[[1; 10]; [[2; 20]; 0]]`. Scalars and arrays can be mixed,
-for example `--input 3 '[4, 5]' '[]'`. String and array inputs require the direct
-interpreter; `.sam` files and `--machine` accept integers only.
+for example `--input 3 '[4, 5]' '[]'`. Strings and arrays are also accepted by `.sam` files and `--machine`.
 
 For string input, keep the JSON double quotes inside shell single quotes.
 For example, save `{ read(text); write(text); }` as `echo.sil`, then run:
@@ -202,6 +228,9 @@ Each top-level string is consumed by one `read`, just like an array or integer.
 
 The library provides `Input.parseInputValues` and
 `runProgramInput :: [InputValue] -> Program -> Either StateError [OutputValue]`.
+The machine provides `runMachineInput` with the same input and output types,
+and `runMachineValues` for integer inputs with general output. `runMachine`
+retains its integer-only input/output API.
 
 ## Tagged expressions
 
@@ -230,6 +259,49 @@ Running the executable without arguments displays the help text.
 The parsers are also available as `parseProgram :: String -> Either ParseError Program`,
 `parseJsonProgram :: String -> Either String Program`, and
 `parseMachine :: String -> Either String MachineProgram`.
+
+## S-expressions and lists
+
+Constructors begin with an uppercase letter and accept zero or more arguments:
+`Nil`, `Node()`, `Node(1, Leaf(2))`. Constructor names are case sensitive.
+Character literals such as `'A'` evaluate to their integer character codes.
+
+Brace lists lower to lowercase `cons`/`nil` S-expressions. The right-associative
+`:` operator prepends a value; it binds below arithmetic and above comparisons.
+
+```sil
+{
+  x = Node(1, Nil);
+  xs = {1, 2, 3};
+  write(x);
+  write(0 : xs);
+  write({1, 2, 3, 4});
+}
+```
+
+Output, with either the direct interpreter or `--machine`:
+
+```text
+Node(1, Nil)
+{0, 1, 2, 3}
+{1, 2, 3, 4}
+```
+
+Run the included example using `cabal run sil-interpreter -- run sexpressions.sil`.
+Proper `cons(head, tail)` chains ending in `nil` print with braces, including
+the empty list `{}`. Other constructors and improper lists print by name,
+for example `cons(1, 2)`. `Nil` remains distinct from the list terminator `nil`.
+
+S-expression fields support zero-based indexing and indexed assignments, with
+the same reference and bounds-checking behavior as arrays. `.length` returns
+the constructor's arity, so a `cons` cell has length two. Cyclic objects cannot
+be printed.
+
+AST JSON uses `{"sexp":"Node","args":[{"const":1},{"sexp":"Nil","args":[]}]}`.
+Lists and `:` use the same representation with names `cons` and `nil`.
+The compiled instruction `{"SEXP":["Node",2]}` consumes two stack values in
+source argument order and pushes the new object. Both JSON parsers validate
+the new forms, and both serializers emit them.
 
 ## Test suite
 

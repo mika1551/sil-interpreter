@@ -14,6 +14,12 @@ data Instruction
   | LoadVar String
   | StoreVar String
   | PushConst Int
+  | PushString String
+  | MakeArray Int
+  | MakeSExpression String Int
+  | LoadIndex
+  | StoreIndex
+  | ObjectLength
   | ApplyBinOp BinOp
   | DefineLabel String
   | Jump String

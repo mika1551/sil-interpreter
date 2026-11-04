@@ -27,6 +27,9 @@ parseAt :: (Int, Value) -> Either String Instruction
 parseAt (index, value) = case value of
   String "READ" -> Right ReadInput
   String "WRITE" -> Right WriteOutput
+  String "ELEM" -> Right LoadIndex
+  String "SET" -> Right StoreIndex
+  String "LENGTH" -> Right ObjectLength
   String name -> Left (path ++ ": unknown instruction " ++ show (Text.unpack name))
   Object fields -> case KeyMap.toList fields of
     [(key, operand)] -> parseObject (path ++ "." ++ Key.toString key) (Key.toString key) operand
@@ -40,6 +43,19 @@ parseObject path name operand = case name of
   "LD" -> LoadVar <$> stringAt path operand
   "ST" -> StoreVar <$> stringAt path operand
   "CONST" -> PushConst <$> intAt path operand
+  "STRING" -> PushString <$> stringAt path operand
+  "ARRAY" -> do
+    count <- intAt path operand
+    if count < 0 then Left (path ++ ": array size must be nonnegative") else Right (MakeArray count)
+  "SEXP" -> case operand of
+    Array values -> case toList values of
+      [tag, arity] -> do
+        constructor <- stringAt (path ++ "[0]") tag
+        count <- intAt (path ++ "[1]") arity
+        if count < 0 then Left (path ++ "[1]: S-expression arity must be nonnegative")
+          else Right (MakeSExpression constructor count)
+      _ -> Left (path ++ ": expected [name, arity]")
+    _ -> Left (path ++ ": expected [name, arity]")
   "BINOP" -> do
     operator <- stringAt path operand
     case parseBinOpName operator of

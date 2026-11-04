@@ -30,6 +30,7 @@ data Expr
   | Bin BinOp Expr Expr
   | StringLiteral String
   | ArrayLiteral [Expr]
+  | SExpression String [Expr]
   | Index Expr Expr
   | Length Expr
   deriving (Eq, Show)

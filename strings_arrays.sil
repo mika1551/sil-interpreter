@@ -1,0 +1,9 @@
+{
+    text = "hello";
+    text[0] = 72;
+    values = [text, [1, 2], []];
+    values[1][0] += 9;
+    write(text);
+    write(values[1]);
+    write(values.length);
+}

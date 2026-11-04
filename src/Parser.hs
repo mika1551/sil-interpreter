@@ -6,9 +6,11 @@ module Parser
 import AST
 import Control.Applicative (empty, optional, (<|>))
 import Control.Monad (void)
-import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
+import Data.Aeson (eitherDecodeStrictText)
+import qualified Data.Text as Text
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit, ord)
 import Data.Void (Void)
-import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, many, notFollowedBy, parse, satisfy, some, try)
+import Text.Megaparsec (Parsec, anySingle, match, sepBy, between, eof, errorBundlePretty, many, notFollowedBy, parse, satisfy, some, try)
 import Text.Megaparsec.Char (char, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 
@@ -92,12 +94,15 @@ assignmentP = assignmentCore <* optionalSemicolon
 
 assignmentCore :: Parser Stmt
 assignmentCore = do
-  name <- identifier
+  target <- primaryP
   operation <- assignmentOperator
   expression <- exprP
-  pure $ case operation of
-    Nothing -> Assign name expression
-    Just op -> AssignOp name op expression
+  case (target, operation) of
+    (Var name, Nothing) -> pure (Assign name expression)
+    (Var name, Just op) -> pure (AssignOp name op expression)
+    (Index object index, Nothing) -> pure (SetIndex object index expression)
+    (Index object index, Just op) -> pure (SetIndexOp object index op expression)
+    _ -> fail "assignment requires a variable or indexed element"
 
 assignmentOperator :: Parser (Maybe BinOp)
 assignmentOperator = (Nothing <$ symbol "=")
@@ -124,7 +129,14 @@ andP :: Parser Expr
 andP = chainLeft comparisonP (Bin And <$ symbol "&&")
 
 comparisonP :: Parser Expr
-comparisonP = chainLeft additiveP (Bin <$> comparisonOperator)
+comparisonP = chainLeft consP (Bin <$> comparisonOperator)
+
+-- Cons binds less tightly than arithmetic and associates to the right.
+consP :: Parser Expr
+consP = do
+  first <- additiveP
+  rest <- optional (symbol ":" *> consP)
+  pure (maybe first (\tailExpr -> SExpression "cons" [first, tailExpr]) rest)
 
 comparisonOperator :: Parser BinOp
 comparisonOperator = Eq <$ symbol "==" <|> Neq <$ symbol "!="
@@ -146,7 +158,35 @@ chainLeft operand operator = do
   pure (foldl (\left (combine, right) -> combine left right) first rest)
 
 primaryP :: Parser Expr
-primaryP = Const <$> integer <|> Var <$> identifier <|> parenthesized exprP
+primaryP = atomP >>= postfix
+  where
+    postfix value =
+      (do index <- between (symbol "[") (symbol "]") exprP
+          postfix (Index value index))
+      <|> (symbol "." *> keyword "length" *> postfix (Length value))
+      <|> pure value
+
+atomP :: Parser Expr
+atomP = Const <$> integer <|> StringLiteral <$> stringLiteralP
+  <|> Const . ord <$> lexeme (between (char '\'') (char '\'') L.charLiteral)
+  <|> constructorP
+  <|> ArrayLiteral <$> between (symbol "[") (symbol "]") (exprP `sepBy` symbol ",")
+  <|> foldr (\item rest -> SExpression "cons" [item, rest]) (SExpression "nil" []) <$> between (symbol "{") (symbol "}") (exprP `sepBy` symbol ",")
+  <|> Var <$> identifier <|> parenthesized exprP
+
+constructorP :: Parser Expr
+constructorP = do
+  name <- lexeme ((:) <$> satisfy isAsciiUpper <*> many (satisfy identifierContinue))
+  arguments <- optional (parenthesized (exprP `sepBy` symbol ","))
+  pure (SExpression name (maybe [] id arguments))
+
+stringLiteralP :: Parser String
+stringLiteralP = lexeme $ do
+  (source, _) <- match (between (char '"') (char '"') (many stringChar))
+  either fail pure (eitherDecodeStrictText (Text.pack source))
+  where
+    stringChar = satisfy (\c -> c /= '"' && c /= '\\' && c >= ' ')
+      <|> (char '\\' *> anySingle)
 
 identifier :: Parser String
 identifier = lexeme $ try $ do

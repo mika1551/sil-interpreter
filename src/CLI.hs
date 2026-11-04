@@ -12,6 +12,7 @@ data Command
   = Run FilePath [Int]
   | RunValues FilePath [InputValue]
   | RunMachine FilePath [Int]
+  | RunMachineValues FilePath [InputValue]
   | Ast FilePath JsonFormat
   | Compile FilePath (Maybe FilePath)
   | Check FilePath
@@ -45,7 +46,7 @@ parseRun arguments = case arguments of
       values <- parseRunOptions (filter (/= "--machine") options)
       case traverse integerInput values of
         Just integers -> Right (if machineFlags == 1 then RunMachine sourceFile integers else Run sourceFile integers)
-        Nothing | machineFlags == 1 -> Left "machine execution does not support string or array inputs"
+        Nothing | machineFlags == 1 -> Right (RunMachineValues sourceFile values)
                 | otherwise -> Right (RunValues sourceFile values)
   where
     integerInput (InputNumber number) = Just number

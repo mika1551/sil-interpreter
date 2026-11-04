@@ -1,11 +1,11 @@
 module Main (main) where
 
-import AST (Program (..), Stmt (..), Expr (..))
+import AST (Program)
 import CLI
 import Compiler (compileProgram)
 import Control.Exception (IOException, try)
-import Data.List (intercalate)
 import Data.Version (showVersion)
+import Input (InputValue (..))
 import Interpreter
 import Json
 import JsonParser (parseJsonProgram)
@@ -32,7 +32,7 @@ executeCommand command = case command of
   Help -> putStrLn helpText
   Version -> putStrLn ("sil-interpreter " ++ showVersion version)
   RunValues sourceFile inputValues
-    | takeExtension sourceFile == ".sam" -> failWith "machine execution does not support string or array inputs"
+    | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ runMachineInputAndPrint inputValues
     | otherwise -> withProgram sourceFile $ \program ->
         case runProgramInput inputValues program of
           Left runtimeError -> failWith (renderRuntimeError runtimeError)
@@ -48,32 +48,28 @@ executeCommand command = case command of
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $
         runMachineAndPrint inputValues
     | otherwise -> withProgram sourceFile $ \program ->
-        if usesExtendedFeatures program
-          then failWith "machine execution does not yet support strings and arrays"
-          else runMachineAndPrint inputValues (compileProgram program)
+        runMachineAndPrint inputValues (compileProgram program)
+  RunMachineValues sourceFile inputValues
+    | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ runMachineInputAndPrint inputValues
+    | otherwise -> withProgram sourceFile $ runMachineInputAndPrint inputValues . compileProgram
   Ast sourceFile _ | takeExtension sourceFile == ".sam" ->
     failWith "ast expects a .sil or .json file"
   Ast sourceFile format -> withProgram sourceFile $ \program ->
-    if usesExtendedFeatures program
-      then failWith "JSON output does not yet support strings and arrays"
-      else putStrLn $ case format of
+    putStrLn $ case format of
         Compact -> programToJson program
         Pretty -> programToPrettyJson program
   Compile sourceFile outputFile
     | takeExtension sourceFile == ".sam" ->
         failWith "compile expects a .sil or .json file"
     | otherwise -> withProgram sourceFile $ \program -> do
-        if usesExtendedFeatures program
-          then failWith "machine compilation does not yet support strings and arrays"
-          else do
-            let result = machineToPrettyJson (compileProgram program) ++ "\n"
-            case outputFile of
-              Nothing -> putStr result
-              Just path -> do
-                writeResult <- try (writeFile path result) :: IO (Either IOException ())
-                case writeResult of
-                  Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
-                  Right () -> pure ()
+        let result = machineToPrettyJson (compileProgram program) ++ "\n"
+        case outputFile of
+          Nothing -> putStr result
+          Just path -> do
+            writeResult <- try (writeFile path result) :: IO (Either IOException ())
+            case writeResult of
+              Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
+              Right () -> pure ()
   Check sourceFile
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         case Machine.validateMachine program of
@@ -95,10 +91,13 @@ withMachine sourceFile action = withSource sourceFile $ \source ->
     Right program -> action program
 
 runMachineAndPrint :: [Int] -> MachineProgram -> IO ()
-runMachineAndPrint inputValues program =
-  case Machine.runMachine inputValues program of
+runMachineAndPrint inputValues = runMachineInputAndPrint (map InputNumber inputValues)
+
+runMachineInputAndPrint :: [InputValue] -> MachineProgram -> IO ()
+runMachineInputAndPrint inputValues program =
+  case Machine.runMachineInput inputValues program of
     Left runtimeError -> failWith (renderMachineError runtimeError)
-    Right valuesWritten -> mapM_ print valuesWritten
+    Right valuesWritten -> mapM_ (putStrLn . renderOutputValue) valuesWritten
 
 withSource :: FilePath -> (String -> IO ()) -> IO ()
 withSource sourceFile action = do
@@ -115,38 +114,7 @@ renderRuntimeError runtimeError = case runtimeError of
   TypeError message -> "runtime error: " ++ message
   IndexOutOfBounds index size -> "runtime error: index " ++ show index ++ " out of bounds for length " ++ show size
   InvalidCharacter code -> "runtime error: invalid character code " ++ show code
-  CyclicOutput -> "runtime error: cannot print a cyclic array"
-
-renderOutputValue :: OutputValue -> String
-renderOutputValue value = case value of
-  OutputNumber n -> show n
-  OutputString text -> text
-  OutputArray values -> "[" ++ intercalate "; " (map renderOutputValue values) ++ "]"
-
-usesExtendedFeatures :: Program -> Bool
-usesExtendedFeatures (Program statements) = any extendedStmt statements
-  where
-    extendedStmt statement = case statement of
-      ReadVar _ -> False
-      Write expression -> extendedExpr expression
-      Assign _ expression -> extendedExpr expression
-      AssignOp _ _ expression -> extendedExpr expression
-      SetIndex _ _ _ -> True
-      SetIndexOp _ _ _ _ -> True
-      While condition body -> extendedExpr condition || extendedStmt body
-      DoWhile body condition -> extendedStmt body || extendedExpr condition
-      For initial condition step body -> any extendedStmt [initial, step, body] || extendedExpr condition
-      If condition thenBranch elseBranch -> extendedExpr condition || extendedStmt thenBranch || maybe False extendedStmt elseBranch
-      Block statements' -> any extendedStmt statements'
-      Skip -> False
-    extendedExpr expression = case expression of
-      Var _ -> False
-      Const _ -> False
-      Bin _ left right -> extendedExpr left || extendedExpr right
-      StringLiteral _ -> True
-      ArrayLiteral _ -> True
-      Index _ _ -> True
-      Length _ -> True
+  CyclicOutput -> "runtime error: cannot print a cyclic object"
 
 renderMachineError :: MachineError -> String
 renderMachineError machineError = case machineError of
@@ -156,6 +124,10 @@ renderMachineError machineError = case machineError of
   Machine.UndefinedVariable name -> "machine error: undefined variable '" ++ name ++ "'"
   Machine.InputExhausted -> "machine error: input exhausted"
   Machine.DivisionByZero -> "machine error: division by zero"
+  Machine.TypeError message -> "machine error: " ++ message
+  Machine.IndexOutOfBounds index size -> "machine error: index " ++ show index ++ " out of bounds for length " ++ show size
+  Machine.InvalidCharacter code -> "machine error: invalid character code " ++ show code
+  Machine.CyclicOutput -> "machine error: cannot print a cyclic object"
 
 failWith :: String -> IO a
 failWith message = hPutStrLn stderr ("error: " ++ message) >> exitFailure

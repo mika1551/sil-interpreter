@@ -4,6 +4,15 @@ module Interpreter
   , HeapObject (..)
   , OutputValue (..)
   , StateError (..)
+  , allocateInputs
+  , allocate
+  , lookupObject
+  , expectNumber
+  , readIndex
+  , writeIndex
+  , apply
+  , resolveOutput
+  , renderOutputValue
   , runProgram
   , runProgramValues
   , runProgramInput
@@ -12,6 +21,7 @@ module Interpreter
 import AST
 import Control.Monad (foldM)
 import Data.Char (chr, ord)
+import Data.List (intercalate)
 import Input (InputValue (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -25,13 +35,29 @@ data Value
 data HeapObject
   = ArrayObject [Value]
   | StringObject String
+  | SExpressionObject String [Value]
   deriving (Eq, Show)
 
 data OutputValue
   = OutputNumber Int
   | OutputString String
   | OutputArray [OutputValue]
+  | OutputSExpression String [OutputValue]
   deriving (Eq, Show)
+
+renderOutputValue :: OutputValue -> String
+renderOutputValue value = case listElements value of
+  Just elements -> "{" ++ intercalate ", " (map renderOutputValue elements) ++ "}"
+  Nothing -> case value of
+    OutputNumber n -> show n
+    OutputString text -> text
+    OutputArray values -> "[" ++ intercalate "; " (map renderOutputValue values) ++ "]"
+    OutputSExpression name [] -> name
+    OutputSExpression name values -> name ++ "(" ++ intercalate ", " (map renderOutputValue values) ++ ")"
+  where
+    listElements (OutputSExpression "nil" []) = Just []
+    listElements (OutputSExpression "cons" [item, rest]) = (item :) <$> listElements rest
+    listElements _ = Nothing
 
 data Runtime = Runtime
   { variables :: Map.Map String Value
@@ -146,6 +172,13 @@ evaluate state expression = case expression of
       evalElement (values, current) item = do
         (value, next) <- evaluate current item
         Right (value : values, next)
+  SExpression name expressions -> do
+    (values, next) <- foldM evalElement ([], state) expressions
+    Right (allocate next (SExpressionObject name (reverse values)))
+    where
+      evalElement (values, current) item = do
+        (value, next) <- evaluate current item
+        Right (value : values, next)
   Index target index -> do
     (object, afterTarget) <- evaluate state target
     (indexValue, afterIndex) <- evaluate afterTarget index
@@ -158,6 +191,7 @@ evaluate state expression = case expression of
     let size = case stored of
           ArrayObject values -> length values
           StringObject text -> length text
+          SExpressionObject _ values -> length values
     Right (Number size, next)
 
 allocate :: Runtime -> HeapObject -> (Value, Runtime)
@@ -171,7 +205,7 @@ lookupVar state name = maybe (Left (UndefinedVariable name)) Right (Map.lookup n
 lookupObject :: Runtime -> Value -> Either StateError HeapObject
 lookupObject state (Ref address) =
   maybe (Left (TypeError "invalid object reference")) Right (Map.lookup address (heap state))
-lookupObject _ (Number _) = Left (TypeError "array or string expected")
+lookupObject _ (Number _) = Left (TypeError "array, string, or S-expression expected")
 
 expectNumber :: Value -> Either StateError Int
 expectNumber (Number value) = Right value
@@ -183,12 +217,14 @@ readIndex state reference position = do
   case object of
     ArrayObject values -> elementAt position values
     StringObject text -> Number . ord <$> elementAt position text
+    SExpressionObject _ values -> elementAt position values
 
 writeIndex :: Runtime -> Value -> Int -> Value -> Either StateError Runtime
 writeIndex state reference position value = do
   object <- lookupObject state reference
   updated <- case object of
     ArrayObject values -> ArrayObject <$> replaceAt position value values
+    SExpressionObject name values -> SExpressionObject name <$> replaceAt position value values
     StringObject text -> do
       code <- expectNumber value
       if code < 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
@@ -196,7 +232,7 @@ writeIndex state reference position value = do
         else StringObject <$> replaceAt position (chr code) text
   case reference of
     Ref address -> Right state { heap = Map.insert address updated (heap state) }
-    Number _ -> Left (TypeError "array or string expected")
+    Number _ -> Left (TypeError "array, string, or S-expression expected")
 
 elementAt :: Int -> [a] -> Either StateError a
 elementAt position values
@@ -233,3 +269,5 @@ resolveOutput state visited (Ref address)
         StringObject text -> Right (OutputString text)
         ArrayObject values ->
           OutputArray <$> traverse (resolveOutput state (Set.insert address visited)) values
+        SExpressionObject name values ->
+          OutputSExpression name <$> traverse (resolveOutput state (Set.insert address visited)) values

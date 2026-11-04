@@ -36,6 +36,19 @@ statementAt path value = case value of
   Object fields | Just payload <- onlyField "assn" fields -> do
     (name, expression) <- pairAt (path ++ ".assn") "dst" "src" payload
     Assign <$> stringAt (path ++ ".assn.dst") name <*> expressionAt (path ++ ".assn.src") expression
+  Object fields | Just payload <- onlyField "setindex" fields -> do
+    (target, index, expression) <- tripleAt (path ++ ".setindex") "target" "index" "value" payload
+    SetIndex <$> expressionAt (path ++ ".setindex.target") target
+      <*> expressionAt (path ++ ".setindex.index") index
+      <*> expressionAt (path ++ ".setindex.value") expression
+  Object fields | Just (Object payload) <- onlyField "setindexop" fields
+    , sameKeys ["target", "index", "op", "value"] payload -> do
+      let location = path ++ ".setindexop"
+      target <- fieldAt location "target" payload >>= expressionAt (location ++ ".target")
+      index <- fieldAt location "index" payload >>= expressionAt (location ++ ".index")
+      op <- fieldAt location "op" payload >>= stringAt (location ++ ".op") >>= binOpAt (location ++ ".op")
+      expression <- fieldAt location "value" payload >>= expressionAt (location ++ ".value")
+      Right (SetIndexOp target index op expression)
   Object fields | Just payload <- onlyField "while" fields -> do
     (condition, body) <- pairAt (path ++ ".while") "cond" "body" payload
     While <$> expressionAt (path ++ ".while.cond") condition <*> bodyAt (path ++ ".while.body") body
@@ -48,7 +61,7 @@ statementAt path value = case value of
        <*> bodyAt (path ++ ".if.then") thenBranch
        <*> (Just <$> bodyAt (path ++ ".if.else") elseBranch)
   Object fields | Just _ <- onlyField "seq" fields -> Block <$> statementsAt path value
-  _ -> Left (path ++ ": expected a statement (skip, read, write, assn, seq, while, do, or if)")
+  _ -> Left (path ++ ": expected a statement (skip, read, write, assn, setindex, setindexop, seq, while, do, or if)")
 
 bodyAt :: String -> Value -> Either String Stmt
 bodyAt = statementAt
@@ -56,9 +69,13 @@ bodyAt = statementAt
 expressionAt :: String -> Value -> Either String Expr
 expressionAt path value = case value of
   Object fields | Just name <- onlyField "var" fields -> Var <$> stringAt (path ++ ".var") name
+  Object fields | Just text <- onlyField "string" fields -> StringLiteral <$> stringAt (path ++ ".string") text
   Object fields | Just number <- onlyField "const" fields -> Const <$> intAt (path ++ ".const") number
   Object fields | Just target <- onlyField "length" fields -> Length <$> expressionAt (path ++ ".length") target
   Object fields | Just elements <- onlyField "array" fields -> ArrayLiteral <$> arrayAt (path ++ ".array") elements
+  Object fields | sameKeys ["sexp", "args"] fields ->
+    SExpression <$> (fieldAt path "sexp" fields >>= stringAt (path ++ ".sexp"))
+      <*> (fieldAt path "args" fields >>= arrayAt (path ++ ".args"))
   Object fields | sameKeys ["elem", "index"] fields -> do
     target <- fieldAt path "elem" fields
     index <- fieldAt path "index" fields
@@ -69,7 +86,7 @@ expressionAt path value = case value of
     rightValue <- fieldAt path "right" fields
     op <- stringAt (path ++ ".binop") opValue >>= binOpAt (path ++ ".binop")
     Bin op <$> expressionAt (path ++ ".left") leftValue <*> expressionAt (path ++ ".right") rightValue
-  _ -> Left (path ++ ": expected an expression (var, const, length, array, elem/index, or binop/left/right)")
+  _ -> Left (path ++ ": expected an expression (var, const, string, length, array, sexp/args, elem/index, or binop/left/right)")
 
 arrayAt :: String -> Value -> Either String [Expr]
 arrayAt path (Array values) = traverse parseElement (zip [0 :: Int ..] (toList values))

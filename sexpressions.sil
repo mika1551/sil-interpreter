@@ -1,0 +1,8 @@
+{
+  x = Node(1, Nil);
+  xs = {1, 2, 3};
+  ys = 0 : xs;
+  write(x);
+  write(ys);
+  write({1, 2, 3, 4});
+}

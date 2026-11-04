@@ -201,8 +201,9 @@ arrayInputChecks = TestList
   , mkEq "array input CLI command"
       (Right (RunValues "list_example.json" [InputArray [InputNumber 0]]))
       (parseCommand ["run", "list_example.json", "--input=[0]"])
-  , mkBool "machine rejects array input"
-      (isLeft (parseCommand ["run", "program.json", "--machine", "-i", "[1]"]))
+  , mkEq "machine accepts array input"
+      (Right (RunMachineValues "program.json" [InputArray [InputNumber 1]]))
+      (parseCommand ["run", "program.json", "--machine", "-i", "[1]"])
   , TestList [mkBool ("reject invalid array input: " ++ source) (isLeft (parseInputValues [source]))
       | source <- ["", "[", "[1,]", "[1 2]", "[1;2]", "[1,,2]", "[1.5]", "[1e0]", "[true]", "[1]junk", "1,", "1,,2", "999999999999999999999999999999999999"]]
   , mkEq "JSON indexing expression"
@@ -308,10 +309,10 @@ stringInputChecks = TestList
   , mkEq "quoted flag remains string input"
       (Right (RunValues "echo.sil" [InputString "--machine"]))
       (parseCommand ["run", "echo.sil", "-i", "\"--machine\""])
-  , TestList [mkEq "machine rejects string inputs"
-      (Left "machine execution does not support string or array inputs")
+  , TestList [mkEq "machine accepts string inputs"
+      (Right (RunMachineValues "echo.sil" values))
       (parseCommand ["run", "echo.sil", "--machine", "-i", source])
-      | source <- ["\"hello\"", "[\"hello\"]"]]
+      | (source, values) <- [("\"hello\"", [InputString "hello"]), ("[\"hello\"]", [InputArray [InputString "hello"]])]]
   , TestList [mkBool ("reject invalid string input: " ++ show source)
       (isLeft (parseInputValues [source]))
       | source <- ["hello", "\"unterminated", "\"trailing\\", "\"\\q\"", "\"\\uZZZZ\"",
@@ -499,8 +500,75 @@ tests = TestList
   , TestLabel "machine" machineChecks
   , TestLabel "machine parser" machineParserChecks
   , TestLabel "compiler" compilerChecks
+  , TestLabel "compiled strings and arrays" extendedCompilerChecks
   , TestLabel "tagged expressions" taggedExprChecks
+  , TestLabel "S-expressions" sexpressionChecks
   ]
+
+sexpressionChecks :: Test
+sexpressionChecks = TestList
+  [ mkEq "constructor and list syntax lower to the requested AST" expected (parseOK source)
+  , mkEq "constructor JSON matches the supplied schema"
+      "{\"write\":{\"sexp\":\"Node\",\"args\":[{\"const\":1},{\"sexp\":\"Nil\",\"args\":[]}]}}"
+      (programToJson (Program [Write node]))
+  , mkEq "compiled constructors match the supplied machine representation"
+      (M.MachineProgram
+        [ M.PushConst 1, M.MakeSExpression "Nil" 0, M.MakeSExpression "Node" 2, M.StoreVar "x"
+        , M.PushConst 1, M.PushConst 2, M.PushConst 3, M.MakeSExpression "nil" 0
+        , M.MakeSExpression "cons" 2, M.MakeSExpression "cons" 2, M.MakeSExpression "cons" 2
+        , M.StoreVar "xs", M.PushConst 0, M.LoadVar "xs", M.MakeSExpression "cons" 2
+        , M.StoreVar "ys", M.LoadVar "x", M.WriteOutput, M.LoadVar "ys", M.WriteOutput ])
+      (compileProgram (parseOK source))
+  , TestList [matching code result | (code, result) <-
+      [ (source, ["Node(1, Nil)", "{0, 1, 2, 3}"])
+      , ("{ write({}); write(Nil); write(Node()); }", ["{}", "Nil", "Node"])
+      , ("{ write(1 : 2 : {}); write(1 + 2 : {}); }", ["{1, 2}", "{3}"])
+      , ("{ write(Node({1, {2}}, [Nil, Leaf(3)], \"x\")); }",
+         ["Node({1, {2}}, [Nil; Leaf(3)], x)"])
+      , ("{ x = Node(1, Leaf(2)); write(x.length); write(x[1][0]); x[0] += 3; write(x); }",
+         ["2", "2", "Node(4, Leaf(2))"])
+      , ("{ xs = {1, 2}; write(xs[0]); write(xs[1]); write(xs.length); }", ["1", "{2}", "2"])
+      , ("{ write(1 : 2); write('A'); }", ["cons(1, 2)", "65"])
+      ]]
+  , TestList [mkBool ("reject malformed constructor: " ++ code) (isLeft (parseProgram code))
+      | code <- ["{ write(Node(1,)); }", "{ write({1,}); }", "{ write(1 :); }", "{ write(Node(,1)); }"]]
+  , TestList [mkBool ("reject malformed SEXP JSON: " ++ json) (isLeft (parseMachine json))
+      | json <- ["[{\"SEXP\":[\"X\",-1]}]", "[{\"SEXP\":[\"X\",1.0]}]",
+                 "[{\"SEXP\":[1,0]}]", "[{\"SEXP\":[\"X\"]}]", "[{\"SEXP\":\"X\"}]"]]
+  , TestList [mkBool ("reject malformed sexp AST: " ++ json) (isLeft (parseJsonProgram json))
+      | json <- ["{\"write\":{\"sexp\":\"X\"}}", "{\"write\":{\"sexp\":1,\"args\":[]}}",
+                 "{\"write\":{\"sexp\":\"X\",\"args\":1}}",
+                 "{\"write\":{\"sexp\":\"X\",\"args\":[],\"extra\":0}}"]]
+  , mkEq "SEXP arity underflow" (Left (MI.StackUnderflow 1))
+      (MI.runMachineValues [] (M.MachineProgram [M.PushConst 1, M.MakeSExpression "X" 2]))
+  , mkEq "negative SEXP arity rejected at runtime" (Left (MI.TypeError "S-expression arity must be nonnegative"))
+      (MI.runMachineValues [] (M.MachineProgram [M.MakeSExpression "X" (-1)]))
+  , mkEq "S-expression cycles fail safely" (Left CyclicOutput)
+      (runProgramValues [] (parseOK "{ x = Node(0); x[0] = x; write(x); }"))
+  , mkEq "compiled S-expression cycles fail safely" (Left MI.CyclicOutput)
+      (MI.runMachineValues [] (compileProgram (parseOK "{ x = Node(0); x[0] = x; write(x); }")))
+  , mkEq "shared list tails are not cycles" (Right ["Pair({1}, {1})"])
+      (rendered (parseOK "{ xs = {1}; write(Pair(xs, xs)); }"))
+  ]
+  where
+    node = SExpression "Node" [Const 1, SExpression "Nil" []]
+    list = foldr (\item rest -> SExpression "cons" [Const item, rest]) (SExpression "nil" []) [1, 2, 3]
+    source = "{ x = Node(1, Nil); xs = {1, 2, 3}; ys = 0 : xs; write(x); write(ys); }"
+    expected = Program [Assign "x" node, Assign "xs" list,
+      Assign "ys" (SExpression "cons" [Const 0, Var "xs"]), Write (Var "x"), Write (Var "ys")]
+    rendered ast = map renderOutputValue <$> runProgramValues [] ast
+    matching code result =
+      let ast = parseOK code
+          machine = compileProgram ast
+      in TestList
+        [ mkEq ("direct S-expression output: " ++ code) (Right result) (rendered ast)
+        , mkEq ("compiled S-expression output: " ++ code) (Right result)
+            (map renderOutputValue <$> MI.runMachineValues [] machine)
+        , mkEq ("S-expression AST JSON semantics: " ++ code) (Right result)
+            (parseJsonProgram (programToJson ast) >>= either (Left . show) Right . rendered)
+        , mkEq ("S-expression machine JSON roundtrip: " ++ code) (Right machine)
+            (parseMachine (machineToPrettyJson machine))
+        ]
 
 taggedExprChecks :: Test
 taggedExprChecks = TestList
@@ -531,3 +599,59 @@ taggedExprChecks = TestList
       (Left "only integer expressions are supported")
       (evalCompiled [] (ArrayLiteral [Const 1]))
   ]
+
+extendedCompilerChecks :: Test
+extendedCompilerChecks = TestList
+  [ TestList (map matching successful)
+  , TestList (map matchingFailure failureCases)
+  , mkEq "extended instruction names and stack order"
+      (Right [OutputString "ZB", OutputNumber 2, OutputNumber 7])
+      (parseMachine "[ {\"STRING\":\"AB\"}, {\"ST\":\"s\"}, {\"LD\":\"s\"}, {\"CONST\":0}, {\"CONST\":90}, \"SET\", {\"LD\":\"s\"}, \"WRITE\", {\"LD\":\"s\"}, \"LENGTH\", \"WRITE\", {\"CONST\":7}, {\"ARRAY\":1}, {\"CONST\":0}, \"ELEM\", \"WRITE\"]"
+        >>= either (Left . show) Right . MI.runMachineInput [])
+  , TestList [mkEq ("extended instruction underflow " ++ show instruction)
+      (Left (MI.StackUnderflow 0)) (MI.runMachine [] (M.MachineProgram [instruction]))
+      | instruction <- [M.MakeArray 1, M.LoadIndex, M.StoreIndex, M.ObjectLength]]
+  , mkBool "negative ARRAY operand is rejected" (isLeft (parseMachine "[{\"ARRAY\":-1}]"))
+  , mkEq "compiler temporaries do not overwrite JSON variables"
+      (Right [OutputNumber 42, OutputArray [OutputNumber 3]])
+      (MI.runMachineInput [] (compileProgram (Program
+        [Assign "$object_0" (Const 42), Assign "a" (ArrayLiteral [Const 1]),
+         SetIndexOp (Var "a") (Const 0) Add (Const 2), Write (Var "$object_0"), Write (Var "a")])))
+  , TestList [mkBool ("invalid literal: " ++ source) (isLeft (parseProgram source))
+      | source <- ["{ write([1,]); }", "{ write(\"bad\\q\"); }", "{ write(\"unterminated); }"]]
+  ]
+  where
+    successful =
+      [ ([], "{ write(\"hello\"); write(\"\"); write(\"Привет 😀\"); write(\"a\\n\\u0041\"); }")
+      , ([], "{ a = [1, [2, \"text\"], []]; write(a); write(a[1][1].length); }")
+      , ([], "{ a = [1]; b = a; b[0] += 2; write(a); a += [4]; write(a); write(b); }")
+      , ([], "{ a = [\"AB\"]; b = a[0]; a[0][0] = 90; b[1] += 1; write(a); write(b); }")
+      , ([], "{ length = [1, 2]; write(length.length); }")
+      , ([], "{ i = 0; while (i < 2) { a = [0]; a[0] = i; write(a); i += 1; } }")
+      , ([], "{ [1][0] += 2; (\"AB\")[0] = 90; write([[], [1]].length); }")
+      , ([InputString "AB", InputArray [InputNumber 7, InputArray []]],
+         "{ read(s); read(a); s[0] = 90; a[0] *= 2; write(s); write(a); write(s.length); }")
+      ]
+    failureCases =
+      [ "{ write([][0]); }", "{ write([1][-1]); }", "{ write(1.length); }"
+      , "{ write([1][\"x\"]); }", "{ a = \"A\"; a[0] = -1; }"
+      , "{ a = \"A\"; a[0] = 55296; }", "{ a = [0]; a[0] = a; write(a); }"
+      , "{ if ([]) skip; }", "{ write([1] - [2]); }"
+      , "{ a = []; a[\"x\"] = missing; }"
+      , "{ a = []; a[0] += missing; }", "{ write([missing, 1 / 0]); }"
+      ]
+    matching (values, source) =
+      let ast = parseOK source
+          machine = compileProgram ast
+          expected = runProgramInput values ast
+          normalized = either (Left . show) Right expected
+      in TestList
+        [ mkEq ("compiled parity: " ++ source) normalized
+            (either (Left . show) Right (MI.runMachineInput values machine))
+        , mkEq ("SAM roundtrip: " ++ source) (Right machine) (parseMachine (machineToJson machine))
+        , mkEq ("AST JSON semantics: " ++ source) normalized
+            (parseJsonProgram (programToPrettyJson ast) >>= either (Left . show) Right . runProgramInput values)
+        ]
+    matchingFailure source = mkEq ("compiled runtime error: " ++ source)
+      (either (Left . show) (Right . show) (runProgramInput [] (parseOK source)))
+      (either (Left . show) (Right . show) (MI.runMachineInput [] (compileProgram (parseOK source))))

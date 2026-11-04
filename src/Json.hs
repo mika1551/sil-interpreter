@@ -39,6 +39,12 @@ instructionJson instruction = case instruction of
   LoadVar name -> object [("LD", string name)]
   StoreVar name -> object [("ST", string name)]
   PushConst value -> object [("CONST", JsonNumber value)]
+  PushString text -> object [("STRING", string text)]
+  MakeArray count -> object [("ARRAY", JsonNumber count)]
+  MakeSExpression name count -> object [("SEXP", JsonArray [string name, JsonNumber count])]
+  LoadIndex -> string "ELEM"
+  StoreIndex -> string "SET"
+  ObjectLength -> string "LENGTH"
   ApplyBinOp op -> object [("BINOP", string (binOpName op))]
   DefineLabel name -> object [("LABEL", string name)]
   Jump name -> object [("JMP", string name)]
@@ -60,6 +66,8 @@ stmtJson statement = case statement of
   Write expression -> object [("write", exprJson expression)]
   Assign name expression -> object [("assn", object [("dst", string name), ("src", exprJson expression)])]
   AssignOp name op expression -> stmtJson (Assign name (Bin op (Var name) expression))
+  SetIndex target index value -> object [("setindex", object [("target", exprJson target), ("index", exprJson index), ("value", exprJson value)])]
+  SetIndexOp target index op value -> object [("setindexop", object [("target", exprJson target), ("index", exprJson index), ("op", string (binOpName op)), ("value", exprJson value)])]
   While condition body -> object [("while", object [("cond", exprJson condition), ("body", stmtJson body)])]
   DoWhile body condition -> object [("do", object [("body", stmtJson body), ("cond", exprJson condition)])]
   For initial condition step body -> sequenceJson [initial, While condition (Block [body, step])]
@@ -71,6 +79,11 @@ exprJson :: Expr -> JsonValue
 exprJson expression = case expression of
   Var name -> object [("var", string name)]
   Const value -> object [("const", JsonNumber value)]
+  StringLiteral text -> object [("string", string text)]
+  ArrayLiteral values -> object [("array", JsonArray (map exprJson values))]
+  SExpression name values -> object [("sexp", string name), ("args", JsonArray (map exprJson values))]
+  Index target index -> object [("elem", exprJson target), ("index", exprJson index)]
+  Length target -> object [("length", exprJson target)]
   Bin op left right -> object [("binop", string (binOpName op)), ("left", exprJson left), ("right", exprJson right)]
 
 binOpName :: BinOp -> String
