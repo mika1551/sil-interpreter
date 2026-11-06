@@ -76,6 +76,7 @@ data StateError
   | IndexOutOfBounds Int Int
   | InvalidCharacter Int
   | CyclicOutput
+  | NoMatchingPattern
   deriving (Eq, Show)
 
 runProgram :: [Int] -> Program -> Either StateError [Int]
@@ -153,7 +154,54 @@ execute state statement = case statement of
     conditionValue <- expectNumber value
     if conditionValue /= 0 then execute next thenBranch else maybe (Right next) (execute next) elseBranch
   Block statements -> foldM execute state statements
+  Switch scrutinee branches -> do
+    (value, next) <- evaluate state scrutinee
+    let select [] = Left NoMatchingPattern
+        select ((patternValue, body) : rest) =
+          case matchPattern next patternValue value of
+            Nothing -> select rest
+            Just bindings -> do
+              let scoped = foldl (\env (name, bound) -> Env.define name bound env)
+                    (Env.pushScope Env.BindingScope (variables next)) bindings
+              final <- execute (next { variables = scoped }) body
+              case Env.popScope (variables final) of
+                Just outer -> Right final { variables = outer }
+                Nothing -> Left (TypeError "missing pattern binding scope")
+    select branches
   Skip -> Right state
+
+matchPattern :: Runtime -> Pattern -> Value -> Maybe [(String, Value)]
+matchPattern state patternValue value = case patternValue of
+  Wildcard -> Just []
+  BindPattern name nested -> do
+    bindings <- matchPattern state nested value
+    pure (bindings ++ [(name, value)])
+  NumberPattern expected -> case value of
+    Number actual | actual == expected -> Just []
+    _ -> Nothing
+  StringPattern expected -> case object of
+    Just (StringObject actual) | actual == expected -> Just []
+    _ -> Nothing
+  ArrayPattern patterns -> case object of
+    Just (ArrayObject values) -> matchElements patterns values
+    _ -> Nothing
+  SExpressionPattern name patterns -> case object of
+    Just (SExpressionObject actual values) | actual == name -> matchElements patterns values
+    _ -> Nothing
+  TypePattern kind -> case (kind, value, object) of
+    (IntType, Number _, _) -> Just []
+    (ArrayType, _, Just (ArrayObject _)) -> Just []
+    (StringType, _, Just (StringObject _)) -> Just []
+    (SExpressionType, _, Just (SExpressionObject _ _)) -> Just []
+    _ -> Nothing
+  where
+    object = case value of
+      Ref address -> Map.lookup address (heap state)
+      Number _ -> Nothing
+    matchElements [] [] = Just []
+    matchElements (p : ps) (v : vs) =
+      (++) <$> matchPattern state p v <*> matchElements ps vs
+    matchElements _ _ = Nothing
 
 evaluate :: Runtime -> Expr -> Either StateError (Value, Runtime)
 evaluate state expression = case expression of

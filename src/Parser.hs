@@ -28,7 +28,50 @@ programP = Program <$> between (symbol "{") (symbol "}") (some stmtP)
 
 stmtP :: Parser Stmt
 stmtP = blockP <|> readP <|> writeP <|> ifP <|> whileP
-    <|> doWhileP <|> forP <|> skipP <|> assignmentP
+    <|> doWhileP <|> forP <|> switchP <|> skipP <|> assignmentP
+
+switchP :: Parser Stmt
+switchP = do
+  keyword "switch"
+  scrutinee <- parenthesized exprP
+  branches <- between (symbol "{") (symbol "}") $ do
+    first <- branchP
+    rest <- many (symbol "|" *> branchP)
+    pure (first : rest)
+  optionalSemicolon
+  pure (Switch scrutinee branches)
+  where
+    branchP = do
+      keyword "case"
+      patternValue <- patternP
+      symbol "->"
+      body <- some stmtP
+      pure (patternValue, Block body)
+
+patternP :: Parser Pattern
+patternP = do
+  first <- patternPrimaryP
+  rest <- optional (symbol ":" *> patternP)
+  pure (maybe first (\tailPattern -> SExpressionPattern "cons" [first, tailPattern]) rest)
+
+patternPrimaryP :: Parser Pattern
+patternPrimaryP = Wildcard <$ symbol "_"
+  <|> StringPattern <$> stringLiteralP
+  <|> NumberPattern . ord <$> lexeme (between (char '\'') (char '\'') L.charLiteral)
+  <|> (do name <- identifier
+          nested <- optional (symbol "@" *> patternP)
+          pure (BindPattern name (fromMaybe Wildcard nested)))
+  <|> ArrayPattern <$> between (symbol "[") (symbol "]") (patternP `sepBy` symbol ",")
+  <|> foldr (\item rest -> SExpressionPattern "cons" [item, rest]) (SExpressionPattern "nil" [])
+        <$> between (symbol "{") (symbol "}") (patternP `sepBy` symbol ",")
+  <|> (do name <- lexeme ((:) <$> satisfy isAsciiUpper <*> many (satisfy identifierContinue))
+          arguments <- optional (parenthesized (patternP `sepBy` symbol ","))
+          pure (SExpressionPattern name (fromMaybe [] arguments)))
+  <|> (symbol "#" *> (TypePattern <$> typeP))
+  <|> parenthesized patternP
+  where
+    typeP = ArrayType <$ keyword "array" <|> IntType <$ keyword "int"
+      <|> StringType <$ keyword "string" <|> SExpressionType <$ keyword "sexp"
 
 blockP :: Parser Stmt
 blockP = Block <$> between (symbol "{") (symbol "}") (many stmtP)
@@ -197,7 +240,7 @@ identifier = lexeme $ try $ do
   if name `elem` reservedWords then empty else pure name
 
 reservedWords :: [String]
-reservedWords = ["read", "write", "if", "else", "elif", "while", "do", "for", "skip"]
+reservedWords = ["read", "write", "if", "else", "elif", "while", "do", "for", "skip", "switch", "case"]
 
 identifierContinue :: Char -> Bool
 identifierContinue c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '_' || c == '\''

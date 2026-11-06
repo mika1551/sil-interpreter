@@ -303,6 +303,52 @@ The compiled instruction `{"SEXP":["Node",2]}` consumes two stack values in
 source argument order and pushes the new object. Both JSON parsers validate
 the new forms, and both serializers emit them.
 
+## Pattern matching
+
+Pattern matching is available in the direct interpreter for both SIL source and
+JSON programs:
+
+```sil
+{
+  value = Pair(11, 22);
+  switch (value) {
+    case whole @ Pair(first, second) -> write(first); write(second);
+    | case _ -> skip;
+  }
+}
+```
+
+The switch expression is evaluated once. Cases are tried in order, and only the
+first matching branch executes. If none matches, execution reports a runtime
+error. Each switch needs at least one case and each case needs a statement.
+
+Patterns support `_`, variable bindings, aliases (`name @ pattern`), strings,
+characters, arrays, constructors, lists (`{head, next}` or `head : tail`),
+parentheses, and the type patterns `#int`, `#array`, `#string`, and `#sexp`.
+Array patterns require an exact length; constructor patterns require an exact
+name and arity. Strings match by content, and characters match integer character
+codes. Integer literal patterns are accepted in JSON; the SIL pattern grammar
+uses character literals instead.
+
+Bindings shadow outer variables only for the selected branch. Assignments to
+other variables and mutations of shared objects persist. Repeated names are
+allowed: siblings bind from left to right, so the later binding wins. An alias
+binds after its inner pattern, so `x @ Leaf(x)` binds `x` to the whole object.
+Failed cases leave no bindings behind.
+
+JSON uses `{"switch":{"scrutinee":expression,"branches":[...]}}`, with each
+branch containing `pattern` and `branch`. Patterns use `{"wildcard":[]}`,
+`{"bind":{"pattern":pattern,"name":"x"}}`, `{"array":[patterns]}`, or
+`{"sexp":"Name","args":[patterns]}`. Literals are bare strings or integers;
+type patterns are the strings `"#int"`, `"#array"`, `"#string"`, and `"#sexp"`.
+These four strings are reserved as type patterns when decoding JSON, as in the
+target format; that format cannot distinguish them from literal string patterns.
+
+`compile` and `run --machine` report that pattern matching requires the direct
+interpreter, including when a switch is nested inside another statement.
+Library callers accepting arbitrary programs can use `compileProgramChecked`
+to receive this error through `Either`.
+
 ## Test suite
 
 The project includes an HUnit-based test suite in [tests/Tests.hs](tests/Tests.hs). It is wired into the Cabal project and can be executed with:

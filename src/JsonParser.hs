@@ -61,7 +61,42 @@ statementAt path value = case value of
        <*> bodyAt (path ++ ".if.then") thenBranch
        <*> (Just <$> bodyAt (path ++ ".if.else") elseBranch)
   Object fields | Just _ <- onlyField "seq" fields -> Block <$> statementsAt path value
-  _ -> Left (path ++ ": expected a statement (skip, read, write, assn, setindex, setindexop, seq, while, do, or if)")
+  Object fields | Just payload <- onlyField "switch" fields -> do
+    (scrutinee, branches) <- pairAt (path ++ ".switch") "scrutinee" "branches" payload
+    parsed <- listAt branchAt (path ++ ".switch.branches") branches
+    if null parsed then Left (path ++ ".switch.branches: expected at least one branch")
+      else Switch <$> expressionAt (path ++ ".switch.scrutinee") scrutinee <*> pure parsed
+  _ -> Left (path ++ ": expected a statement (skip, read, write, assn, setindex, setindexop, seq, while, do, if, or switch)")
+
+branchAt :: String -> Value -> Either String (Pattern, Stmt)
+branchAt path value = do
+  (patternValue, body) <- pairAt path "pattern" "branch" value
+  (,) <$> patternAt (path ++ ".pattern") patternValue <*> bodyAt (path ++ ".branch") body
+
+patternAt :: String -> Value -> Either String Pattern
+patternAt path value = case value of
+  Number _ -> NumberPattern <$> intAt path value
+  String "#array" -> Right (TypePattern ArrayType)
+  String "#int" -> Right (TypePattern IntType)
+  String "#string" -> Right (TypePattern StringType)
+  String "#sexp" -> Right (TypePattern SExpressionType)
+  String text -> Right (StringPattern (Text.unpack text))
+  Object fields | Just (Array items) <- onlyField "wildcard" fields, null items -> Right Wildcard
+  Object fields | Just payload <- onlyField "bind" fields -> do
+    (nested, name) <- pairAt (path ++ ".bind") "pattern" "name" payload
+    BindPattern <$> stringAt (path ++ ".bind.name") name <*> patternAt (path ++ ".bind.pattern") nested
+  Object fields | Just items <- onlyField "array" fields ->
+    ArrayPattern <$> listAt patternAt (path ++ ".array") items
+  Object fields | sameKeys ["sexp", "args"] fields ->
+    SExpressionPattern <$> (fieldAt path "sexp" fields >>= stringAt (path ++ ".sexp"))
+      <*> (fieldAt path "args" fields >>= listAt patternAt (path ++ ".args"))
+  _ -> Left (path ++ ": expected a pattern")
+
+listAt :: (String -> Value -> Either String a) -> String -> Value -> Either String [a]
+listAt decode path (Array values) = traverse
+  (\(index, item) -> decode (path ++ "[" ++ show index ++ "]") item)
+  (zip [0 :: Int ..] (toList values))
+listAt _ path _ = Left (path ++ ": expected an array")
 
 bodyAt :: String -> Value -> Either String Stmt
 bodyAt = statementAt

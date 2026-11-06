@@ -2,7 +2,7 @@ module Main (main) where
 
 import AST (Program)
 import CLI
-import Compiler (compileProgram)
+import Compiler (compileProgramChecked)
 import Control.Exception (IOException, try)
 import Data.Version (showVersion)
 import Input (InputValue (..))
@@ -47,11 +47,10 @@ executeCommand command = case command of
   RunMachine sourceFile inputValues
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $
         runMachineAndPrint inputValues
-    | otherwise -> withProgram sourceFile $ \program ->
-        runMachineAndPrint inputValues (compileProgram program)
+    | otherwise -> withCompiledProgram sourceFile $ runMachineAndPrint inputValues
   RunMachineValues sourceFile inputValues
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ runMachineInputAndPrint inputValues
-    | otherwise -> withProgram sourceFile $ runMachineInputAndPrint inputValues . compileProgram
+    | otherwise -> withCompiledProgram sourceFile $ runMachineInputAndPrint inputValues
   Ast sourceFile _ | takeExtension sourceFile == ".sam" ->
     failWith "ast expects a .sil or .json file"
   Ast sourceFile format -> withProgram sourceFile $ \program ->
@@ -61,8 +60,8 @@ executeCommand command = case command of
   Compile sourceFile outputFile
     | takeExtension sourceFile == ".sam" ->
         failWith "compile expects a .sil or .json file"
-    | otherwise -> withProgram sourceFile $ \program -> do
-        let result = machineToPrettyJson (compileProgram program) ++ "\n"
+    | otherwise -> withCompiledProgram sourceFile $ \program -> do
+        let result = machineToPrettyJson program ++ "\n"
         case outputFile of
           Nothing -> putStr result
           Just path -> do
@@ -83,6 +82,12 @@ withProgram sourceFile action = withSource sourceFile $ \source ->
   case (if takeExtension sourceFile == ".json" then parseJsonProgram else parseProgram) source of
     Left parseError -> failWith (sourceFile ++ ": " ++ parseError)
     Right program -> action program
+
+withCompiledProgram :: FilePath -> (MachineProgram -> IO ()) -> IO ()
+withCompiledProgram sourceFile action = withProgram sourceFile $ \program ->
+  case compileProgramChecked program of
+    Left message -> failWith message
+    Right compiled -> action compiled
 
 withMachine :: FilePath -> (MachineProgram -> IO ()) -> IO ()
 withMachine sourceFile action = withSource sourceFile $ \source ->
@@ -115,6 +120,7 @@ renderRuntimeError runtimeError = case runtimeError of
   IndexOutOfBounds index size -> "runtime error: index " ++ show index ++ " out of bounds for length " ++ show size
   InvalidCharacter code -> "runtime error: invalid character code " ++ show code
   CyclicOutput -> "runtime error: cannot print a cyclic object"
+  NoMatchingPattern -> "runtime error: no matching switch case"
 
 renderMachineError :: MachineError -> String
 renderMachineError machineError = case machineError of

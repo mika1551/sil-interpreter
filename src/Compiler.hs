@@ -1,4 +1,4 @@
-module Compiler (compileProgram, compileExpr) where
+module Compiler (compileProgram, compileProgramChecked, compileExpr) where
 
 import AST
 import Data.List (isPrefixOf)
@@ -9,6 +9,22 @@ compileProgram (Program statements) = MachineProgram (fst (compileStatements pre
   where
     names = concatMap statementNames statements
     prefix = head [replicate n '$' | n <- [1 ..], (not . any (replicate n '$' `isPrefixOf`)) names]
+
+-- Keep the existing pure API for supported programs; callers that accept
+-- arbitrary source can report unsupported features before generating code.
+compileProgramChecked :: Program -> Either String MachineProgram
+compileProgramChecked program@(Program statements) = do
+  mapM_ check statements
+  Right (compileProgram program)
+  where
+    check statement = case statement of
+      Switch _ _ -> Left "pattern matching is supported only by the direct interpreter"
+      Block body -> mapM_ check body
+      While _ body -> check body
+      DoWhile body _ -> check body
+      For initial _ step body -> mapM_ check [initial, step, body]
+      If _ yes no -> check yes >> maybe (Right ()) check no
+      _ -> Right ()
 
 compileStatements :: String -> Int -> Maybe String -> [Stmt] -> ([Instruction], Int)
 compileStatements prefix next continuation statements = case statements of
@@ -38,6 +54,7 @@ compileStmt prefix next continuation statement = case statement of
         ++ compileExpr value ++ [ApplyBinOp op, StoreIndex], next + 1)
   Block statements -> compileStatements prefix next continuation statements
   Skip -> ([], next)
+  Switch _ _ -> error "pattern matching is supported only by the direct interpreter"
   If condition thenBranch elseBranch ->
     let (endLabel, afterEnd, endCode) = case continuation of
           Just name -> (name, next, [])
@@ -101,6 +118,7 @@ statementNames statement = case statement of
   If condition yes no -> expressionNames condition ++ statementNames yes ++ maybe [] statementNames no
   Block statements -> concatMap statementNames statements
   Skip -> []
+  Switch scrutinee branches -> expressionNames scrutinee ++ concatMap (statementNames . snd) branches
 
 expressionNames :: Expr -> [String]
 expressionNames expression = case expression of

@@ -2,7 +2,7 @@ module Main (main) where
 
 import AST
 import CLI
-import Compiler (compileProgram)
+import Compiler (compileProgram, compileProgramChecked)
 import Data.Char (isSpace)
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
@@ -493,6 +493,7 @@ compilerChecks = TestList
 tests :: Test
 tests = TestList
   [ TestLabel "environment" environmentChecks
+  , TestLabel "pattern matching" patternChecks
   , TestLabel "parser" checks
   , TestLabel "runtime" runtimeChecks
   , TestLabel "cli" cliChecks
@@ -506,6 +507,75 @@ tests = TestList
   , TestLabel "tagged expressions" taggedExprChecks
   , TestLabel "S-expressions" sexpressionChecks
   ]
+
+patternChecks :: Test
+patternChecks = TestList
+  [ TestList [mkEq ("direct matching: " ++ source) (Right expected) (run source)
+      | (source, expected) <- successful]
+  , TestList [mkEq ("JSON matching: " ++ source) (Right expected)
+      (runProgram [] (parseJsonOK (programToJson (parseOK source))))
+      | (source, expected) <- successful]
+  , mkEq "no matching branch" (Left NoMatchingPattern)
+      (run "{ switch (1) { case 'a' -> skip; } }")
+  , mkEq "pattern binding does not escape" (Left (UndefinedVariable "item"))
+      (run "{ switch (1) { case item -> skip; } write(item); }")
+  , mkEq "scrutinee errors propagate" (Left DivisionByZero)
+      (run "{ switch (1 / 0) { case _ -> skip; } }")
+  , mkEq "target JSON schema" targetJson (programToJson (parseOK schemaSource))
+  , mkEq "target JSON schema decodes" (Right [97])
+      (runProgram [] (parseJsonOK targetJson))
+  , TestList [mkBool ("reject malformed switch: " ++ source) (isLeft (parseProgram source))
+      | source <- ["{ switch (1) {} }", "{ switch (1) { case _ -> } }"
+                  , "{ switch (1) { case #other -> skip; } }"
+                  , "{ switch (1) { case 1 -> skip; } }"
+                  , "{ switch (1) { case _ -> skip; | } }"
+                  , "{ case = 1; }", "{ switch = 1; }"]]
+  , TestList [mkBool ("reject malformed switch JSON: " ++ source)
+        (isLeft (parseJsonProgram source)) | source <- malformedJson]
+  , TestList [mkBool ("reject compiled pattern matching: " ++ source)
+        (isLeft (compileProgramChecked (parseOK source)))
+      | source <- ["{ switch (1) { case _ -> skip; } }"
+                  , "{ if (0) { switch (1) { case _ -> skip; } } }"
+                  , "{ while (0) switch (1) { case _ -> skip; } }"]]
+  , mkEq "checked compilation preserves existing compiler" (Right (compileProgram ordinary))
+      (compileProgramChecked ordinary)
+  ]
+  where
+    run source = runProgram [] (parseOK source)
+    ordinary = parseOK "{ write(42); }"
+    schemaSource = "{ switch (Leaf('a')) { case whole @ Leaf(x) -> write(x); | case _ -> skip; } }"
+    targetJson = "{\"switch\":{\"scrutinee\":{\"sexp\":\"Leaf\",\"args\":[{\"const\":97}]},\"branches\":[{\"pattern\":{\"bind\":{\"pattern\":{\"sexp\":\"Leaf\",\"args\":[{\"bind\":{\"pattern\":{\"wildcard\":[]},\"name\":\"x\"}}]},\"name\":\"whole\"}},\"branch\":{\"write\":{\"var\":\"x\"}}},{\"pattern\":{\"wildcard\":[]},\"branch\":\"skip\"}]}}"
+    malformedJson =
+      [ "{\"switch\":{\"scrutinee\":{\"const\":1},\"branches\":[]}}"
+      , "{\"switch\":{\"scrutinee\":{\"const\":1},\"branches\":false}}"
+      , badPattern "{\"wildcard\":[1]}"
+      , badPattern "{\"bind\":{\"name\":\"x\"}}"
+      , badPattern "{\"array\":false}"
+      , badPattern "{\"sexp\":\"Leaf\",\"args\":[false]}"
+      , badPattern "{\"wildcard\":[],\"extra\":1}"
+      ]
+    badPattern p = "{\"switch\":{\"scrutinee\":{\"const\":1},\"branches\":[{\"pattern\":" ++ p ++ ",\"branch\":\"skip\"}]}}"
+    successful =
+      [ ("{ switch (42) { case _ -> write(1); write(2); | case _ -> write(3); } }", [1, 2])
+      , ("{ switch (42) { case value -> write(value); } }", [42])
+      , ("{ switch (\"hello\") { case \"other\" -> write(0); | case \"hello\" -> write(3); } }", [3])
+      , ("{ switch ('a') { case 'b' -> write(0); | case 'a' -> write(5); } }", [5])
+      , ("{ switch (Node(Leaf('a'), Nil)) { case whole @ Node(Leaf(item), Nil) -> write(item); write(whole.length); } }", [97, 2])
+      , ("{ switch (['a', ['b']]) { case [first, [second]] -> write(first); write(second); } }", [97, 98])
+      , ("{ switch ({}) { case {} -> write(8); } switch ({'a', 'b'}) { case {first, second} -> write(first); write(second); } }", [8, 97, 98])
+      , ("{ switch ({'a', 'b', 'c'}) { case (first : second : rest) -> write(first); write(second); write(rest[0]); } }", [97, 98, 99])
+      , ("{ switch ([1]) { case #int -> write(0); | case #string -> write(0); | case #sexp -> write(0); | case #array -> write(9); } switch (42) { case number @ #int -> write(number); } switch (\"hello\") { case #string -> write(10); } switch (Leaf(1)) { case #sexp -> write(11); } }", [9, 42, 10, 11])
+      , ("{ switch (Pair(11, 11)) { case Pair(x, x) -> write(x); } switch (Pair(11, 22)) { case Pair(x, x) -> write(x); } switch ([33, 44]) { case [x, x] -> write(x); } switch ({55, 66}) { case {x, x} -> write(x); } switch (Leaf(77)) { case x @ Leaf(x) -> write(x[0]); } switch (Pair(Leaf(88), Leaf(99))) { case Pair(Leaf(x), Leaf(x)) -> write(x); } }", [11, 22, 44, 66, 77, 99])
+      , ("{ x = 5; switch (Pair(1, 2)) { case Pair(x, 'z') -> skip; | case _ -> write(x); } write(x); }", [5, 5])
+      , ("{ x = 5; switch (1) { case x -> x = 2; y = 3; write(x); } write(x); write(y); }", [2, 5, 3])
+      , ("{ total = 0; switch (1) { case _ -> total = 7; } write(total); }", [7])
+      , ("{ switch (1) { case x -> switch (2) { case x -> write(x); } write(x); } }", [2, 1])
+      , ("{ a = [1]; switch (a) { case whole @ [item] -> whole[0] = 9; } write(a[0]); }", [9])
+      , ("{ switch (Pair(1, 2)) { case Other(a, b) -> write(0); | case Pair(a) -> write(0); | case [a, b] -> write(0); | case Pair(a, b) -> write(b); } }", [2])
+      , ("{ switch ([1, 2]) { case [x] -> write(0); | case [x, y, z] -> write(0); | case #array -> write(1); } }", [1])
+      , ("{ a = Loop(0); a[0] = a; switch (a) { case Loop(Loop(x)) -> write(x.length); } }", [1])
+      , ("{ switch ([]) { case [] -> write(1); } }", [1])
+      ]
 
 sexpressionChecks :: Test
 sexpressionChecks = TestList
@@ -658,7 +728,7 @@ extendedCompilerChecks = TestList
       (either (Left . show) (Right . show) (runProgramInput [] (parseOK source)))
       (either (Left . show) (Right . show) (MI.runMachineInput [] (compileProgram (parseOK source))))
 
--- Exercise scopes directly until the AST introduces them.
+-- Exercise the environment's binding and variable scope rules directly.
 environmentChecks :: Test
 environmentChecks = TestList
   [ mkEq "empty environment has no names" Nothing (Env.lookup "x" initial)

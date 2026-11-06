@@ -3,6 +3,8 @@ module AST
   , Stmt (..)
   , Expr (..)
   , BinOp (..)
+  , Pattern (..)
+  , PatternType (..)
   ) where
 
 newtype Program = Program [Stmt]
@@ -19,9 +21,23 @@ data Stmt
   | DoWhile Stmt Expr
   | For Stmt Expr Stmt Stmt
   | If Expr Stmt (Maybe Stmt)
+  | Switch Expr [(Pattern, Stmt)]
   | Block [Stmt]
   | Skip
   
+  deriving (Eq, Show)
+
+data Pattern
+  = Wildcard
+  | BindPattern String Pattern
+  | NumberPattern Int
+  | StringPattern String
+  | ArrayPattern [Pattern]
+  | SExpressionPattern String [Pattern]
+  | TypePattern PatternType
+  deriving (Eq, Show)
+
+data PatternType = ArrayType | IntType | StringType | SExpressionType
   deriving (Eq, Show)
 
 data Expr

@@ -58,6 +58,7 @@ runtimeResult = either (Left . convert) Right
       I.IndexOutOfBounds index size -> IndexOutOfBounds index size
       I.InvalidCharacter code -> InvalidCharacter code
       I.CyclicOutput -> CyclicOutput
+      I.NoMatchingPattern -> TypeError "pattern matching is supported only by the direct interpreter"
 
 validateMachine :: MachineProgram -> Either MachineError ()
 validateMachine (MachineProgram instructions) = void (validatedLabels instructions)

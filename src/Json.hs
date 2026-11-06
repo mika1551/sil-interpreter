@@ -73,7 +73,28 @@ stmtJson statement = case statement of
   For initial condition step body -> sequenceJson [initial, While condition (Block [body, step])]
   If condition thenBranch elseBranch -> object [("if", object [("cond", exprJson condition), ("then", stmtJson thenBranch), ("else", maybe (string "skip") stmtJson elseBranch)])]
   Block statements -> sequenceJson statements
+  Switch scrutinee branches -> object [("switch", object
+    [("scrutinee", exprJson scrutinee), ("branches", JsonArray (map branchJson branches))])]
+    where
+      branchJson (patternValue, body) = object
+        [("pattern", patternJson patternValue), ("branch", stmtJson body)]
   Skip -> string "skip"
+
+patternJson :: Pattern -> JsonValue
+patternJson patternValue = case patternValue of
+  Wildcard -> object [("wildcard", JsonArray [])]
+  BindPattern name nested -> object [("bind", object
+    [("pattern", patternJson nested), ("name", string name)])]
+  NumberPattern value -> JsonNumber value
+  StringPattern text -> string text
+  ArrayPattern patterns -> object [("array", JsonArray (map patternJson patterns))]
+  SExpressionPattern name patterns -> object
+    [("sexp", string name), ("args", JsonArray (map patternJson patterns))]
+  TypePattern kind -> string $ case kind of
+    ArrayType -> "#array"
+    IntType -> "#int"
+    StringType -> "#string"
+    SExpressionType -> "#sexp"
 
 exprJson :: Expr -> JsonValue
 exprJson expression = case expression of
