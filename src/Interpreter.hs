@@ -19,6 +19,7 @@ module Interpreter
   ) where
 
 import AST
+import qualified Environment as Env
 import Control.Monad (foldM)
 import Data.Char (chr, ord)
 import Data.List (intercalate)
@@ -60,7 +61,7 @@ renderOutputValue value = case listElements value of
     listElements _ = Nothing
 
 data Runtime = Runtime
-  { variables :: Map.Map String Value
+  { variables :: Env.Environment Value
   , input :: [Value]
   , output :: [Value]
   , heap :: Map.Map Int HeapObject
@@ -88,7 +89,7 @@ runProgramValues values = runProgramInput (map InputNumber values)
 
 runProgramInput :: [InputValue] -> Program -> Either StateError [OutputValue]
 runProgramInput values (Program statements) = do
-  let (inputs, allocated) = allocateInputs (Runtime Map.empty [] [] Map.empty 0) values
+  let (inputs, allocated) = allocateInputs (Runtime Env.empty [] [] Map.empty 0) values
       initial = allocated { input = inputs }
   finalState <- execute initial (Block statements)
   traverse (resolveOutput finalState Set.empty) (reverse (output finalState))
@@ -109,18 +110,18 @@ execute :: Runtime -> Stmt -> Either StateError Runtime
 execute state statement = case statement of
   ReadVar name -> case input state of
     [] -> Left InputExhausted
-    value : rest -> Right state { variables = Map.insert name value (variables state), input = rest }
+    value : rest -> Right state { variables = Env.assign name value (variables state), input = rest }
   Write expression -> do
     (value, next) <- evaluate state expression
     Right next { output = value : output next }
   Assign name expression -> do
     (value, next) <- evaluate state expression
-    Right next { variables = Map.insert name value (variables next) }
+    Right next { variables = Env.assign name value (variables next) }
   AssignOp name op expression -> do
     oldValue <- lookupVar state name
     (rightValue, next) <- evaluate state expression
     (value, final) <- apply next op oldValue rightValue
-    Right final { variables = Map.insert name value (variables final) }
+    Right final { variables = Env.assign name value (variables final) }
   SetIndex target index expression -> do
     (object, afterTarget) <- evaluate state target
     (indexValue, afterIndex) <- evaluate afterTarget index
@@ -200,7 +201,7 @@ allocate state object =
   in (Ref address, state { heap = Map.insert address object (heap state), nextAddress = address + 1 })
 
 lookupVar :: Runtime -> String -> Either StateError Value
-lookupVar state name = maybe (Left (UndefinedVariable name)) Right (Map.lookup name (variables state))
+lookupVar state name = maybe (Left (UndefinedVariable name)) Right (Env.lookup name (variables state))
 
 lookupObject :: Runtime -> Value -> Either StateError HeapObject
 lookupObject state (Ref address) =

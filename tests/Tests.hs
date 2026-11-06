@@ -7,6 +7,7 @@ import Data.Char (isSpace)
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import Interpreter
+import qualified Environment as Env
 import Input (InputValue (..), parseInputValues)
 import Json
 import JsonParser (parseJsonProgram)
@@ -491,7 +492,8 @@ compilerChecks = TestList
 
 tests :: Test
 tests = TestList
-  [ TestLabel "parser" checks
+  [ TestLabel "environment" environmentChecks
+  , TestLabel "parser" checks
   , TestLabel "runtime" runtimeChecks
   , TestLabel "cli" cliChecks
   , TestLabel "json" jsonChecks
@@ -655,3 +657,52 @@ extendedCompilerChecks = TestList
     matchingFailure source = mkEq ("compiled runtime error: " ++ source)
       (either (Left . show) (Right . show) (runProgramInput [] (parseOK source)))
       (either (Left . show) (Right . show) (MI.runMachineInput [] (compileProgram (parseOK source))))
+
+-- Exercise scopes directly until the AST introduces them.
+environmentChecks :: Test
+environmentChecks = TestList
+  [ mkEq "empty environment has no names" Nothing (Env.lookup "x" initial)
+  , mkEq "global scope cannot be popped" Nothing (Env.popScope initial)
+  , mkEq "define replaces a binding in the same scope" (Just 2)
+      (Env.lookup "x" (Env.define "x" 2 global))
+  , mkEq "lookup traverses several scopes" (Just 1)
+      (Env.lookup "x" (Env.pushScope Env.BindingScope local))
+  , mkEq "local definition shadows global" (Just 2) (Env.lookup "x" shadowed)
+  , mkEq "popping restores outer binding" (Just (Just 1))
+      (Env.lookup "x" <$> Env.popScope shadowed)
+  , mkEq "local names disappear on pop" (Just Nothing)
+      (Env.lookup "temporary" <$> Env.popScope (Env.define "temporary" 3 local))
+  , mkEq "assignment updates nearest binding" (Just 4)
+      (Env.lookup "x" (Env.assign "x" 4 shadowed))
+  , mkEq "assignment to shadow leaves global intact" (Just (Just 1))
+      (Env.lookup "x" <$> Env.popScope (Env.assign "x" 4 shadowed))
+  , mkEq "assignment traverses scopes to existing global" (Just (Just 4))
+      (Env.lookup "x" <$> Env.popScope (Env.assign "x" 4 local))
+  , mkEq "new assignment passes through binding scopes to global" (Just (Just 5))
+      (Env.lookup "new" <$> (Env.popScope (Env.assign "new" 5 nested) >>= Env.popScope))
+  , mkEq "new assignment belongs to nearest variable scope" (Just (Just 6))
+      (Env.lookup "new" <$> Env.popScope owned)
+  , mkEq "variable scope names disappear when it is popped" (Just Nothing)
+      (Env.lookup "new" <$> (Env.popScope owned >>= Env.popScope))
+  , mkEq "existing globals remain writable through variable scopes" (Just (Just 7))
+      (Env.lookup "x" <$> Env.popScope (Env.assign "x" 7 variable))
+  , mkEq "missing lookup traverses scopes" Nothing (Env.lookup "missing" nested)
+  , mkEq "AST blocks and branches still share global scope" (Right [3, 4])
+      (runProgram [] blockProgram)
+  , mkEq "compiled blocks and branches still share global scope" (Right [3, 4])
+      (MI.runMachine [] (compileProgram blockProgram))
+  ]
+  where
+    initial = Env.empty :: Env.Environment Int
+    global = Env.define "x" 1 initial
+    local = Env.pushScope Env.BindingScope global
+    nested = Env.pushScope Env.BindingScope local
+    shadowed = Env.define "x" 2 local
+    variable = Env.pushScope Env.VariableScope global
+    owned = Env.assign "new" 6 (Env.pushScope Env.BindingScope variable)
+    blockProgram = Program
+      [ Assign "x" (Const 1)
+      , Block [Assign "x" (Const 3)]
+      , If (Const 1) (Block [Assign "y" (Const 4)]) Nothing
+      , Write (Var "x"), Write (Var "y")
+      ]

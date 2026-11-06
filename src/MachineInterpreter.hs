@@ -8,6 +8,7 @@ module MachineInterpreter
   , runMachineInput
   ) where
 
+import qualified Environment as Env
 import Control.Monad (foldM)
 import Data.Array (Array, bounds, (!), listArray)
 import qualified Data.Map.Strict as Map
@@ -41,7 +42,7 @@ runMachineValues values = runMachineInput (map InputNumber values)
 runMachineInput :: [InputValue] -> MachineProgram -> Either MachineError [I.OutputValue]
 runMachineInput values (MachineProgram instructions) = do
   labels <- validatedLabels instructions
-  let (inputs, allocated) = I.allocateInputs (I.Runtime Map.empty [] [] Map.empty 0) values
+  let (inputs, allocated) = I.allocateInputs (I.Runtime Env.empty [] [] Map.empty 0) values
   final <- execute (listArray (0, length instructions - 1) instructions) labels
     allocated { I.input = inputs }
   runtimeResult (traverse (I.resolveOutput final Set.empty) (reverse (I.output final)))
@@ -99,11 +100,11 @@ execute instructions labels = go 0 []
           WriteOutput -> case stack of
             value : rest -> go (pc + 1) rest state { I.output = value : I.output state }
             [] -> Left (StackUnderflow pc)
-          LoadVar name -> case Map.lookup name (I.variables state) of
+          LoadVar name -> case Env.lookup name (I.variables state) of
             Just value -> go (pc + 1) (value : stack) state
             Nothing -> Left (UndefinedVariable name)
           StoreVar name -> case stack of
-            value : rest -> go (pc + 1) rest state { I.variables = Map.insert name value (I.variables state) }
+            value : rest -> go (pc + 1) rest state { I.variables = Env.assign name value (I.variables state) }
             [] -> Left (StackUnderflow pc)
           PushConst value -> go (pc + 1) (I.Number value : stack) state
           PushString text ->
