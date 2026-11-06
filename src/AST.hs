@@ -5,7 +5,7 @@ module AST
   , BinOp (..)
   ) where
 
-data Program = Program [Stmt]
+newtype Program = Program [Stmt]
   deriving (Eq, Show)
 
 data Stmt

@@ -13,6 +13,7 @@ import Data.Void (Void)
 import Text.Megaparsec (Parsec, anySingle, match, sepBy, between, eof, errorBundlePretty, many, notFollowedBy, parse, satisfy, some, try)
 import Text.Megaparsec.Char (char, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
+import Data.Maybe (fromMaybe)
 
 type ParseError = String
 type Parser = Parsec Void String
@@ -178,7 +179,7 @@ constructorP :: Parser Expr
 constructorP = do
   name <- lexeme ((:) <$> satisfy isAsciiUpper <*> many (satisfy identifierContinue))
   arguments <- optional (parenthesized (exprP `sepBy` symbol ","))
-  pure (SExpression name (maybe [] id arguments))
+  pure (SExpression name (fromMaybe [] arguments))
 
 stringLiteralP :: Parser String
 stringLiteralP = lexeme $ do

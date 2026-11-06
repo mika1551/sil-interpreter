@@ -8,7 +8,7 @@ compileProgram :: Program -> MachineProgram
 compileProgram (Program statements) = MachineProgram (fst (compileStatements prefix 0 Nothing statements))
   where
     names = concatMap statementNames statements
-    prefix = head [replicate n '$' | n <- [1 ..], all (not . (replicate n '$' `isPrefixOf`)) names]
+    prefix = head [replicate n '$' | n <- [1 ..], (not . any (replicate n '$' `isPrefixOf`)) names]
 
 compileStatements :: String -> Int -> Maybe String -> [Stmt] -> ([Instruction], Int)
 compileStatements prefix next continuation statements = case statements of

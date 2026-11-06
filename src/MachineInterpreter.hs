@@ -9,7 +9,7 @@ module MachineInterpreter
   ) where
 
 import qualified Environment as Env
-import Control.Monad (foldM)
+import Control.Monad (foldM, void)
 import Data.Array (Array, bounds, (!), listArray)
 import qualified Data.Map.Strict as Map
 import Machine (Instruction (..), MachineProgram (..))
@@ -60,7 +60,7 @@ runtimeResult = either (Left . convert) Right
       I.CyclicOutput -> CyclicOutput
 
 validateMachine :: MachineProgram -> Either MachineError ()
-validateMachine (MachineProgram instructions) = () <$ validatedLabels instructions
+validateMachine (MachineProgram instructions) = void (validatedLabels instructions)
 
 validatedLabels :: [Instruction] -> Either MachineError (Map.Map String Int)
 validatedLabels instructions = do

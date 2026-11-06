@@ -6,9 +6,10 @@ import qualified Data.Aeson.Decoding.Text as Decoding
 import Data.Aeson.Decoding.Tokens (Number (..), TkArray (..), TkRecord (..), Tokens (..))
 import qualified Data.Aeson.Key as Key
 import Data.Text (Text)
+import Control.Monad (void)
 
 validateJsonSyntax :: Text -> Either String ()
-validateJsonSyntax source = () <$ checkValue (Decoding.textToTokens source)
+validateJsonSyntax source = void (checkValue (Decoding.textToTokens source))
 
 checkValue :: Tokens k String -> Either String k
 checkValue token = case token of
