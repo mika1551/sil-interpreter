@@ -37,6 +37,9 @@ instructionJson instruction = case instruction of
   ReadInput -> string "READ"
   WriteOutput -> string "WRITE"
   LoadVar name -> object [("LD", string name)]
+  EnterScope -> string "SCOPE"
+  LeaveScope -> string "ENDSCOPE"
+  BindVar name -> object [("BIND", string name)]
   StoreVar name -> object [("ST", string name)]
   PushConst value -> object [("CONST", JsonNumber value)]
   PushString text -> object [("STRING", string text)]
@@ -44,6 +47,11 @@ instructionJson instruction = case instruction of
   MakeSExpression name count -> object [("SEXP", JsonArray [string name, JsonNumber count])]
   LoadIndex -> string "ELEM"
   StoreIndex -> string "SET"
+  IsType kind -> object [("ISTYPE", string (case kind of
+    IntType -> "int"; ArrayType -> "array"; StringType -> "string"; SExpressionType -> "sexp"))]
+  IsTag name count -> object [("ISTAG", JsonArray [string name, JsonNumber count])]
+  StringEquals text -> object [("STREQ", string text)]
+  MatchFail -> string "MATCHFAIL"
   ObjectLength -> string "LENGTH"
   ApplyBinOp op -> object [("BINOP", string (binOpName op))]
   DefineLabel name -> object [("LABEL", string name)]

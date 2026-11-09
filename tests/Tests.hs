@@ -493,6 +493,8 @@ compilerChecks = TestList
 tests :: Test
 tests = TestList
   [ TestLabel "environment" environmentChecks
+  , TestLabel "machine binding scopes" machineScopeChecks
+  , TestLabel "compiled matching" compiledPatternChecks
   , TestLabel "pattern matching" patternChecks
   , TestLabel "parser" checks
   , TestLabel "runtime" runtimeChecks
@@ -515,6 +517,7 @@ patternChecks = TestList
   , TestList [mkEq ("JSON matching: " ++ source) (Right expected)
       (runProgram [] (parseJsonOK (programToJson (parseOK source))))
       | (source, expected) <- successful]
+  , TestList [patternParity [] (parseOK source) | (source, _) <- successful]
   , mkEq "no matching branch" (Left NoMatchingPattern)
       (run "{ switch (1) { case 'a' -> skip; } }")
   , mkEq "pattern binding does not escape" (Left (UndefinedVariable "item"))
@@ -532,8 +535,8 @@ patternChecks = TestList
                   , "{ case = 1; }", "{ switch = 1; }"]]
   , TestList [mkBool ("reject malformed switch JSON: " ++ source)
         (isLeft (parseJsonProgram source)) | source <- malformedJson]
-  , TestList [mkBool ("reject compiled pattern matching: " ++ source)
-        (isLeft (compileProgramChecked (parseOK source)))
+  , TestList [mkEq ("accept compiled pattern matching: " ++ source)
+        (Right (compileProgram (parseOK source))) (compileProgramChecked (parseOK source))
       | source <- ["{ switch (1) { case _ -> skip; } }"
                   , "{ if (0) { switch (1) { case _ -> skip; } } }"
                   , "{ while (0) switch (1) { case _ -> skip; } }"]]
@@ -776,3 +779,138 @@ environmentChecks = TestList
       , If (Const 1) (Block [Assign "y" (Const 4)]) Nothing
       , Write (Var "x"), Write (Var "y")
       ]
+
+-- Compare both successful values and the precise runtime error constructors.
+patternParity :: [InputValue] -> Program -> Test
+patternParity values ast =
+  let machine = compileProgram ast
+  in TestList
+    [ mkEq ("pattern runtime parity: " ++ show ast)
+        (either (Left . show) Right (runProgramInput values ast))
+        (either (Left . show) Right (MI.runMachineInput values machine))
+    , mkEq "compiled match has valid labels" (Right ()) (MI.validateMachine machine)
+    , mkEq "compiled match compact SAM roundtrip" (Right machine) (parseMachine (machineToJson machine))
+    , mkEq "compiled match pretty SAM roundtrip" (Right machine) (parseMachine (machineToPrettyJson machine))
+    ]
+
+compiledPatternChecks :: Test
+compiledPatternChecks = TestList
+  [ TestList [patternParity [] (parseOK source) | source <-
+      [ "{ switch (1) { case 'a' -> skip; } }"
+      , "{ switch (1 / 0) { case _ -> skip; } }"
+      , "{ switch (missing) { case _ -> skip; } }"
+      , "{ switch (1) { case x -> skip; } write(x); }"
+      , "{ x = 9; switch (Pair(1, 2)) { case Pair(x, 'a') -> skip; | case Pair('a', x) -> skip; } }"
+      , "{ x = 9; switch (1) { case x -> switch (2) { case y -> x += y; } write(x); } write(x); }"
+      , "{ i = 0; while (i < 3) { switch (i) { case 'a' -> skip; | case x -> if (x < 2) write(x); else write(9); } i += 1; } }"
+      , "{ i = 0; do { switch (i) { case x -> write(x); } i += 1; } while (i < 2); }"
+      , "{ for (i = 0; i < 2; i += 1) switch (i) { case x -> if (x) write(x); } }"
+      , "{ switch (Box([Leaf('z')])) { case Box([Leaf(x)]) -> switch (x) { case 'z' -> write(x); | case _ -> skip; } | case _ -> skip; } }"
+      , "{ a = [0]; switch (a + []) { case x @ [y] -> x[0] = 7; write(x); } write(a); }"
+      , "{ a = Node(0); a[0] = a; switch (a) { case Node(Node(x)) -> write(x); } }"
+      , "{ s = \"abc\"; s[0] = 122; switch (s) { case \"abc\" -> write(0); | case \"zbc\" -> write(1); } }"
+      ]]
+  , patternParity [InputNumber 8] (parseOK
+      "{ x = 7; switch (1) { case x -> read(x); write(x); } write(x); }")
+  , patternParity [InputString "abc", InputArray [InputNumber 1]] (parseOK
+      "{ read(s); read(a); switch (Pair(s, a)) { case Pair(\"abc\", [x]) -> write(x); } }")
+  , patternParity [] (Program [Switch (Const 1) []])
+  , patternParity [] (Program
+      [ Assign "$match_0" (Const 91)
+      , Switch (ArrayLiteral [Const 2])
+          [(BindPattern "$binding_0_0_0" (ArrayPattern [BindPattern "$object_0" Wildcard]),
+            Block [Write (Var "$object_0"), Write (Var "$binding_0_0_0")])]
+      , Write (Var "$match_0") ])
+  -- Bounded cross-product exercises specialization/default interactions,
+  -- including broad type rows before and after structural rows.
+  , TestList [patternParity [] (Program [Switch value
+        [(p, Write (Const 1)), (q, Write (Const 2)), (Wildcard, Write (Const 3))]])
+      | value <- values, p <- patterns, q <- patterns]
+  , TestList [patternParity [] (Program [Switch (ArrayLiteral [value, Const n])
+        [(ArrayPattern [TypePattern ArrayType, NumberPattern 0], Write (Const 1)),
+         (ArrayPattern [ArrayPattern [Wildcard], NumberPattern 1], Write (Const 2)),
+         (ArrayPattern [TypePattern IntType, NumberPattern 0], Write (Const 3)),
+         (ArrayPattern [NumberPattern 0, Wildcard], Write (Const 4)),
+         (ArrayPattern [Wildcard, TypePattern IntType], Write (Const 5))]])
+      | value <- [ArrayLiteral [], ArrayLiteral [Const 0], Const 0, StringLiteral ""], n <- [0, 1]]
+  , mkEq "common outer constructor test is shared" 1
+      (length [() | M.IsTag "Pair" 2 <- sharedCode])
+  , mkEq "branch body is emitted once despite specialization" 1
+      (length [() | M.PushConst 9876 <- sharedCode])
+  , TestList [mkEq "predicate stack underflow" (Left (MI.StackUnderflow 0))
+        (MI.runMachine [] (M.MachineProgram [instruction]))
+      | instruction <- [M.IsType IntType, M.IsTag "X" 0, M.StringEquals "x"]]
+  , mkEq "explicit machine match failure" (Left MI.NoMatchingPattern)
+      (MI.runMachine [] (M.MachineProgram [M.MatchFail]))
+  , mkEq "predicates reject incompatible values without errors" (Right [0, 0, 0])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 0, M.IsTag "X" 0, M.WriteOutput
+        , M.PushConst 0, M.StringEquals "", M.WriteOutput
+        , M.PushConst 0, M.IsType ArrayType, M.WriteOutput ]))
+  , mkEq "all predicates serialize and parse" (Right predicateProgram)
+      (parseMachine (machineToPrettyJson predicateProgram))
+  , TestList [mkBool ("reject malformed predicate: " ++ source) (isLeft (parseMachine source))
+      | source <- ["[{\"ISTYPE\":\"unknown\"}]", "[{\"ISTYPE\":1}]",
+                   "[{\"ISTAG\":[\"X\",-1]}]", "[{\"ISTAG\":[\"X\",1.0]}]",
+                   "[{\"ISTAG\":[1,0]}]", "[{\"ISTAG\":[\"X\"]}]",
+                   "[{\"STREQ\":1}]", "[{\"MATCHFAIL\":0}]"]]
+  ]
+  where
+    values = [Const 0, Const 1, StringLiteral "", StringLiteral "a",
+              ArrayLiteral [], ArrayLiteral [Const 1],
+              SExpression "Pair" [Const 0, Const 1], SExpression "Other" []]
+    patterns = [Wildcard, NumberPattern 0, StringPattern "a", ArrayPattern [],
+                ArrayPattern [NumberPattern 1],
+                SExpressionPattern "Pair" [NumberPattern 0, Wildcard],
+                SExpressionPattern "Pair" [Wildcard, NumberPattern 0],
+                SExpressionPattern "Other" [],
+                TypePattern IntType, TypePattern StringType,
+                TypePattern ArrayType, TypePattern SExpressionType]
+    M.MachineProgram sharedCode = compileProgram (Program
+      [Switch (SExpression "Pair" [Const 0, Const 1])
+        [(SExpressionPattern "Pair" [NumberPattern 0, NumberPattern 0], Write (Const 1)),
+         (SExpressionPattern "Pair" [NumberPattern 0, NumberPattern 1], Write (Const 2)),
+         (TypePattern SExpressionType, Write (Const 9876))]])
+    predicateProgram = M.MachineProgram
+      ([M.IsType kind | kind <- [IntType, ArrayType, StringType, SExpressionType]]
+       ++ [M.IsTag "X" 2, M.StringEquals "Привет\n", M.MatchFail])
+
+
+machineScopeChecks :: Test
+machineScopeChecks = TestList
+  [ mkEq "machine scopes restore bindings and preserve the value stack" (Right [3, 2, 4, 77, 1, 5])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushConst 1, M.StoreVar "x", M.PushConst 77, M.EnterScope
+        , M.PushConst 2, M.BindVar "x", M.EnterScope
+        , M.PushConst 3, M.BindVar "x", M.LoadVar "x", M.WriteOutput
+        , M.LeaveScope, M.LoadVar "x", M.WriteOutput
+        , M.PushConst 4, M.StoreVar "x", M.LoadVar "x", M.WriteOutput
+        , M.PushConst 5, M.StoreVar "y", M.LeaveScope, M.WriteOutput
+        , M.LoadVar "x", M.WriteOutput, M.LoadVar "y", M.WriteOutput ]))
+  , mkEq "BIND replaces the local definition" (Right [2])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.EnterScope, M.PushConst 1, M.BindVar "x", M.PushConst 2
+        , M.BindVar "x", M.LoadVar "x", M.WriteOutput, M.LeaveScope ]))
+  , mkEq "scope definitions disappear on exit" (Left (MI.UndefinedVariable "x"))
+      (MI.runMachine [] (M.MachineProgram
+        [M.EnterScope, M.PushConst 1, M.BindVar "x", M.LeaveScope, M.LoadVar "x"]))
+  , mkEq "cannot leave the global environment" (Left (MI.TypeError "missing pattern binding scope"))
+      (MI.runMachine [] (M.MachineProgram [M.LeaveScope]))
+  , mkEq "BIND stack underflow" (Left (MI.StackUnderflow 1))
+      (MI.runMachine [] (M.MachineProgram [M.EnterScope, M.BindVar "x"]))
+  , mkEq "scope instructions parse" (Right scopeProgram)
+      (parseMachine "[\"SCOPE\",{\"CONST\":1},{\"BIND\":\"x\"},\"ENDSCOPE\"]")
+  , mkEq "scope instructions serialize" (Right scopeProgram)
+      (parseMachine (machineToJson scopeProgram))
+  , TestList [mkBool ("reject malformed scope instruction: " ++ source) (isLeft (parseMachine source))
+      | source <- ["[\"BIND\"]", "[{\"BIND\":1}]", "[{\"SCOPE\":0}]", "[{\"ENDSCOPE\":0}]"]]
+  , TestList [patternParity [] (parseOK source) | source <-
+      [ "{ x = 3; while (x) { switch (x) { case x -> x = 0; } x -= 1; } write(x); }"
+      , "{ i = 0; x = 9; while (i < 3) { switch (i) { case x -> if (x < 2) skip; else if (x) x = 0; } write(x); i += 1; } }"
+      , "{ x = 9; switch (1) { case x -> if (x) switch (2) { case x -> x = 3; } else skip; } write(x); }"
+      , "{ switch (1) { case x -> if (x) switch (2) { case y -> z = x + y; } } write(z); }"
+      , "{ switch (1) { case _ -> skip; } write(missing); }"
+      ]]
+  ]
+  where
+    scopeProgram = M.MachineProgram [M.EnterScope, M.PushConst 1, M.BindVar "x", M.LeaveScope]

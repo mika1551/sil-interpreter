@@ -2,6 +2,7 @@ module Compiler (compileProgram, compileProgramChecked, compileExpr) where
 
 import AST
 import Data.List (isPrefixOf)
+import qualified PatternMatrix as PM
 import Machine
 
 compileProgram :: Program -> MachineProgram
@@ -10,21 +11,8 @@ compileProgram (Program statements) = MachineProgram (fst (compileStatements pre
     names = concatMap statementNames statements
     prefix = head [replicate n '$' | n <- [1 ..], (not . any (replicate n '$' `isPrefixOf`)) names]
 
--- Keep the existing pure API for supported programs; callers that accept
--- arbitrary source can report unsupported features before generating code.
 compileProgramChecked :: Program -> Either String MachineProgram
-compileProgramChecked program@(Program statements) = do
-  mapM_ check statements
-  Right (compileProgram program)
-  where
-    check statement = case statement of
-      Switch _ _ -> Left "pattern matching is supported only by the direct interpreter"
-      Block body -> mapM_ check body
-      While _ body -> check body
-      DoWhile body _ -> check body
-      For initial _ step body -> mapM_ check [initial, step, body]
-      If _ yes no -> check yes >> maybe (Right ()) check no
-      _ -> Right ()
+compileProgramChecked = Right . compileProgram
 
 compileStatements :: String -> Int -> Maybe String -> [Stmt] -> ([Instruction], Int)
 compileStatements prefix next continuation statements = case statements of
@@ -54,7 +42,7 @@ compileStmt prefix next continuation statement = case statement of
         ++ compileExpr value ++ [ApplyBinOp op, StoreIndex], next + 1)
   Block statements -> compileStatements prefix next continuation statements
   Skip -> ([], next)
-  Switch _ _ -> error "pattern matching is supported only by the direct interpreter"
+  Switch scrutinee branches -> compileSwitch prefix next continuation scrutinee branches
   If condition thenBranch elseBranch ->
     let (endLabel, afterEnd, endCode) = case continuation of
           Just name -> (name, next, [])
@@ -118,7 +106,7 @@ statementNames statement = case statement of
   If condition yes no -> expressionNames condition ++ statementNames yes ++ maybe [] statementNames no
   Block statements -> concatMap statementNames statements
   Skip -> []
-  Switch scrutinee branches -> expressionNames scrutinee ++ concatMap (statementNames . snd) branches
+  Switch scrutinee branches -> expressionNames scrutinee ++ concatMap (\(p, body) -> map fst (PM.patternBindings p) ++ statementNames body) branches
 
 expressionNames :: Expr -> [String]
 expressionNames expression = case expression of
@@ -129,3 +117,43 @@ expressionNames expression = case expression of
   Index target index -> expressionNames target ++ expressionNames index
   Length target -> expressionNames target
   _ -> []
+
+compileSwitch :: String -> Int -> Maybe String -> Expr -> [(Pattern, Stmt)] -> ([Instruction], Int)
+compileSwitch prefix next continuation scrutinee branches =
+  let root = prefix ++ "match_" ++ show next
+      endLabel = label "match_end" next
+      branchLabel i = label "match_branch" next ++ "_" ++ show i
+      (decision, afterDecision) = emitDecision root branchLabel (next + 1)
+        (PM.compileMatrix (map fst branches))
+      emitBodies counter [] = ([], counter)
+      emitBodies counter ((i, (p, body)) : rest) =
+        let bindings = concat [loadOccurrence root path ++ [BindVar name]
+                              | (name, path) <- PM.patternBindings p]
+            (code, afterBody) = compileStmt prefix counter (Just endLabel) body
+            (remaining, final) = emitBodies afterBody rest
+        in ([DefineLabel (branchLabel i), EnterScope] ++ bindings ++ code ++ [Jump endLabel] ++ remaining, final)
+      (bodies, finalNext) = emitBodies afterDecision (zip [0 :: Int ..] branches)
+      endCode = [DefineLabel endLabel, LeaveScope] ++ maybe [] (\target -> [Jump target]) continuation
+  in (compileExpr scrutinee ++ [StoreVar root] ++ decision ++ bodies ++ endCode, finalNext)
+
+loadOccurrence :: String -> PM.Occurrence -> [Instruction]
+loadOccurrence root path = LoadVar root : concatMap (\i -> [PushConst i, LoadIndex]) path
+
+emitDecision :: String -> (Int -> String) -> Int -> PM.Decision -> ([Instruction], Int)
+emitDecision root branchLabel next decision = case decision of
+  PM.Failure -> ([MatchFail], next)
+  PM.Success i -> ([Jump (branchLabel i)], next)
+  PM.Test path test yes no ->
+    let noLabel = label "match_no" next
+        (yesCode, afterYes) = emitDecision root branchLabel (next + 1) yes
+        (noCode, final) = emitDecision root branchLabel afterYes no
+        load = loadOccurrence root path
+        predicate = case test of
+          PM.TypeHead kind -> load ++ [IsType kind, JumpIfZero noLabel]
+          PM.NumberHead n -> load ++ [IsType IntType, JumpIfZero noLabel]
+            ++ load ++ [PushConst n, ApplyBinOp Eq, JumpIfZero noLabel]
+          PM.StringHead text -> load ++ [StringEquals text, JumpIfZero noLabel]
+          PM.ArrayHead count -> load ++ [IsType ArrayType, JumpIfZero noLabel]
+            ++ load ++ [ObjectLength, PushConst count, ApplyBinOp Eq, JumpIfZero noLabel]
+          PM.ConstructorHead name count -> load ++ [IsTag name count, JumpIfZero noLabel]
+    in (predicate ++ yesCode ++ [DefineLabel noLabel] ++ noCode, final)

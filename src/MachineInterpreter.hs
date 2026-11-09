@@ -8,6 +8,7 @@ module MachineInterpreter
   , runMachineInput
   ) where
 
+import AST (PatternType (..))
 import qualified Environment as Env
 import Control.Monad (foldM, void)
 import Data.Array (Array, bounds, (!), listArray)
@@ -28,6 +29,7 @@ data MachineError
   | IndexOutOfBounds Int Int
   | InvalidCharacter Int
   | CyclicOutput
+  | NoMatchingPattern
   deriving (Eq, Show)
 
 runMachine :: [Int] -> MachineProgram -> Either MachineError [Int]
@@ -58,7 +60,7 @@ runtimeResult = either (Left . convert) Right
       I.IndexOutOfBounds index size -> IndexOutOfBounds index size
       I.InvalidCharacter code -> InvalidCharacter code
       I.CyclicOutput -> CyclicOutput
-      I.NoMatchingPattern -> TypeError "pattern matching is supported only by the direct interpreter"
+      I.NoMatchingPattern -> NoMatchingPattern
 
 validateMachine :: MachineProgram -> Either MachineError ()
 validateMachine (MachineProgram instructions) = void (validatedLabels instructions)
@@ -107,6 +109,14 @@ execute instructions labels = go 0 []
           StoreVar name -> case stack of
             value : rest -> go (pc + 1) rest state { I.variables = Env.assign name value (I.variables state) }
             [] -> Left (StackUnderflow pc)
+          BindVar name -> case stack of
+            value : rest -> go (pc + 1) rest state { I.variables = Env.define name value (I.variables state) }
+            [] -> Left (StackUnderflow pc)
+          EnterScope -> go (pc + 1) stack state
+            { I.variables = Env.pushScope Env.BindingScope (I.variables state) }
+          LeaveScope -> case Env.popScope (I.variables state) of
+            Just outer -> go (pc + 1) stack state { I.variables = outer }
+            Nothing -> Left (TypeError "missing pattern binding scope")
           PushConst value -> go (pc + 1) (I.Number value : stack) state
           PushString text ->
             let (value, next) = I.allocate state (I.StringObject text)
@@ -137,6 +147,19 @@ execute instructions labels = go 0 []
               next <- runtimeResult (I.writeIndex state object position value)
               go (pc + 1) rest next
             _ -> Left (StackUnderflow pc)
+          MatchFail -> Left NoMatchingPattern
+          IsType kind -> predicate $ \value -> case (kind, value, storedObject value) of
+            (IntType, I.Number _, _) -> True
+            (ArrayType, _, Just (I.ArrayObject _)) -> True
+            (StringType, _, Just (I.StringObject _)) -> True
+            (SExpressionType, _, Just (I.SExpressionObject _ _)) -> True
+            _ -> False
+          IsTag name count -> predicate $ \value -> case storedObject value of
+            Just (I.SExpressionObject actual items) -> name == actual && count == length items
+            _ -> False
+          StringEquals expected -> predicate $ \value -> case storedObject value of
+            Just (I.StringObject actual) -> expected == actual
+            _ -> False
           ObjectLength -> case stack of
             value : rest -> do
               object <- runtimeResult (I.lookupObject state value)
@@ -156,9 +179,14 @@ execute instructions labels = go 0 []
           JumpIfZero name -> branch (== 0) name
           JumpIfNonZero name -> branch (/= 0) name
       where
-        branch predicate name = case stack of
+        storedObject (I.Ref address) = Map.lookup address (I.heap state)
+        storedObject (I.Number _) = Nothing
+        predicate test = case stack of
+          value : rest -> go (pc + 1) (I.Number (if test value then 1 else 0) : rest) state
+          [] -> Left (StackUnderflow pc)
+        branch test name = case stack of
           value : rest -> do
             number <- runtimeResult (I.expectNumber value)
-            go (if predicate number then target name else pc + 1) rest state
+            go (if test number then target name else pc + 1) rest state
           [] -> Left (StackUnderflow pc)
     target name = labels Map.! name + 1

@@ -4,6 +4,7 @@ module MachineParser
   ( parseMachine
   ) where
 
+import AST (PatternType (..))
 import Data.Aeson (Value (..), eitherDecodeStrictText)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -25,6 +26,9 @@ parseMachine source = do
 
 parseAt :: (Int, Value) -> Either String Instruction
 parseAt (index, value) = case value of
+  String "SCOPE" -> Right EnterScope
+  String "ENDSCOPE" -> Right LeaveScope
+  String "MATCHFAIL" -> Right MatchFail
   String "READ" -> Right ReadInput
   String "WRITE" -> Right WriteOutput
   String "ELEM" -> Right LoadIndex
@@ -40,7 +44,26 @@ parseAt (index, value) = case value of
 
 parseObject :: String -> String -> Value -> Either String Instruction
 parseObject path name operand = case name of
+  "ISTYPE" -> do
+    kind <- stringAt path operand
+    case kind of
+      "int" -> Right (IsType IntType)
+      "array" -> Right (IsType ArrayType)
+      "string" -> Right (IsType StringType)
+      "sexp" -> Right (IsType SExpressionType)
+      _ -> Left (path ++ ": unknown value type " ++ show kind)
+  "STREQ" -> StringEquals <$> stringAt path operand
+  "ISTAG" -> case operand of
+    Array values -> case toList values of
+      [tag, arity] -> do
+        constructor <- stringAt (path ++ "[0]") tag
+        count <- intAt (path ++ "[1]") arity
+        if count < 0 then Left (path ++ "[1]: S-expression arity must be nonnegative")
+          else Right (IsTag constructor count)
+      _ -> Left (path ++ ": expected [name, arity]")
+    _ -> Left (path ++ ": expected [name, arity]")
   "LD" -> LoadVar <$> stringAt path operand
+  "BIND" -> BindVar <$> stringAt path operand
   "ST" -> StoreVar <$> stringAt path operand
   "CONST" -> PushConst <$> intAt path operand
   "STRING" -> PushString <$> stringAt path operand

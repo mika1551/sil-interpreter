@@ -133,6 +133,7 @@ renderMachineError machineError = case machineError of
   Machine.TypeError message -> "machine error: " ++ message
   Machine.IndexOutOfBounds index size -> "machine error: index " ++ show index ++ " out of bounds for length " ++ show size
   Machine.InvalidCharacter code -> "machine error: invalid character code " ++ show code
+  Machine.NoMatchingPattern -> "machine error: no matching switch case"
   Machine.CyclicOutput -> "machine error: cannot print a cyclic object"
 
 failWith :: String -> IO a

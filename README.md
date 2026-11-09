@@ -305,8 +305,8 @@ the new forms, and both serializers emit them.
 
 ## Pattern matching
 
-Pattern matching is available in the direct interpreter for both SIL source and
-JSON programs:
+Pattern matching is available in the direct interpreter and the abstract machine
+for both SIL source and JSON programs:
 
 ```sil
 {
@@ -344,10 +344,46 @@ type patterns are the strings `"#int"`, `"#array"`, `"#string"`, and `"#sexp"`.
 These four strings are reserved as type patterns when decoding JSON, as in the
 target format; that format cannot distinguish them from literal string patterns.
 
-`compile` and `run --machine` report that pattern matching requires the direct
-interpreter, including when a switch is nested inside another statement.
-Library callers accepting arbitrary programs can use `compileProgramChecked`
-to receive this error through `Either`.
+`compile` and `run --machine` support switches, including nested switches and
+switches inside loops. `compileProgramChecked` retains its existing `Either`
+API and accepts all AST statement forms.
+
+The compiler uses an ordered pattern matrix. Rows identify source branches;
+columns identify paths into the scrutinee. It tests the leftmost constrained
+column of the first row and recursively builds a specialized matrix for a
+successful test and a default matrix for a failed test. Array and constructor
+specialization expands their children into columns. Wildcards and compatible
+type patterns participate in each applicable specialization, preserving branch
+priority. Common constructor tests are shared; each branch body is emitted once.
+Only successful matches install bindings, in the same order as the direct
+interpreter. Each selected branch enters a machine binding scope; bindings use
+source variable names. All successful paths leave that scope before continuing
+after the switch. Nested switches enter nested scopes, including when the
+compiler reuses a surrounding loop or conditional continuation.
+
+Seven SAM instructions support the generated decision trees and binding scopes:
+
+| JSON instruction | Stack effect and behavior |
+| --- | --- |
+| `{"ISTYPE":"int"}` | Consume one value; push integer `1` if its type matches, otherwise `0`. Types are `int`, `array`, `string`, and `sexp`. |
+| `{"ISTAG":["Pair",2]}` | Consume one value; push `1` for an S-expression with this exact name and arity, otherwise `0`. Arity must be nonnegative. |
+| `{"STREQ":"hello"}` | Consume one value; push `1` for a string with this content, otherwise `0`. |
+| `"SCOPE"` | Enter an empty binding scope; leave the value stack unchanged. |
+| `{"BIND":"name"}` | Consume one value; define or replace the name in the current scope, shadowing an outer binding. |
+| `"ENDSCOPE"` | Leave the current scope, restoring outer bindings; leave the value stack unchanged. An attempt to leave the global environment reports a type error. |
+| `"MATCHFAIL"` | Stop with `NoMatchingPattern` (`no matching switch case` in the CLI). |
+
+The predicates return `0` for incompatible types and report stack underflow if
+no value is available. Existing integer comparisons, `LENGTH`, `ELEM`, and
+conditional jumps perform the remaining tests and field access. Shape checks
+precede field access, so an incompatible pattern fails without raising a type
+or bounds error. Compact and pretty SAM serialization support all seven forms.
+
+`ST` updates the nearest existing binding. A new variable assigned with `ST`
+is introduced outside binding scopes, so it persists after the switch, matching
+the direct interpreter. `BIND` defines a name in the current environment even
+if an outer binding exists; repeated `BIND`s replace it in traversal order.
+`SCOPE` and `ENDSCOPE` do not undo changes to shared heap objects.
 
 ## Test suite
 
