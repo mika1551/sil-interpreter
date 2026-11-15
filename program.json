@@ -1,76 +1,36 @@
 {
-  "seq": {
-    "left": { "read": "rep" },
-    "right": {
-      "while": {
-        "cond": {
-          "binop": ">",
-          "left": { "var": "rep" },
-          "right": { "const": 0 }
-        },
-        "body": {
-          "seq": {
-            "left": {
-              "assn": {
-                "dst": "rep",
-                "src": {
-                  "binop": "-",
-                  "left": { "var": "rep" },
-                  "right": { "const": 1 }
-                }
-              }
-            },
-            "right": {
-              "seq": {
-                "left": { "read": "n" },
-                "right": {
-                  "seq": {
-                    "left": { "assn": { "dst": "f", "src": { "const": 1 } } },
-                    "right": {
-                      "seq": {
-                        "left": {
-                          "while": {
-                            "cond": {
-                              "binop": ">",
-                              "left": { "var": "n" },
-                              "right": { "const": 0 }
-                            },
-                            "body": {
-                              "seq": {
-                                "left": {
-                                  "assn": {
-                                    "dst": "f",
-                                    "src": {
-                                      "binop": "*",
-                                      "left": { "var": "f" },
-                                      "right": { "var": "n" }
-                                    }
-                                  }
-                                },
-                                "right": {
-                                  "assn": {
-                                    "dst": "n",
-                                    "src": {
-                                      "binop": "-",
-                                      "left": { "var": "n" },
-                                      "right": { "const": 1 }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        },
-                        "right": { "write": { "var": "f" } }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+  read(smth);
+  
+  buf   = "[";
+  stack = {[[smth], 0]};
+
+  while (stack != {}) {
+    switch (stack) {
+      case [vector, pos]:tl ->
+        if (pos >= vector.length) {
+	  buf += "]";
+	  stack = tl	
+	}
+	else {	
+          if (pos < vector.length && pos > 0) {
+	    buf += ", ";
+	  }
+	  
+	  current = vector[pos];
+	  pos    += 1;
+	  
+          switch (current) {
+            case x@#int    -> buf += x; stack = [vector, pos]:tl
+          | case s@#string -> buf += s; stack = [vector, pos]:tl
+          | case a@#array  -> 
+              buf += "array [";
+	      stack = [a, 0]:[vector, pos]:tl
+          | case s@#sexp   ->
+	      buf += "sexp [";
+	      stack = [s, 0]:[vector, pos]:tl
           }
-        }
-      }
-    }
-  }
+	}
+    }}
+
+  write (buf)
 }

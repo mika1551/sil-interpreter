@@ -15,6 +15,7 @@ data Command
   | RunMachineValues FilePath [InputValue]
   | Ast FilePath JsonFormat
   | Compile FilePath (Maybe FilePath)
+  | CompileStackDepth FilePath (Maybe FilePath)
   | Check FilePath
   | Help
   | Version
@@ -71,10 +72,16 @@ parseAst arguments = case arguments of
 
 parseCompile :: [String] -> Either String Command
 parseCompile arguments = case arguments of
-  [sourceFile] -> Right (Compile sourceFile Nothing)
-  [sourceFile, "-o", outputFile] -> Right (Compile sourceFile (Just outputFile))
-  [sourceFile, "--output", outputFile] -> Right (Compile sourceFile (Just outputFile))
-  _ -> Left "usage: sil-interpreter compile <file.sil|file.json> [-o <file.sam>]"
+  sourceFile : options -> go Nothing False options
+    where
+      go output depth [] = Right ((if depth then CompileStackDepth else Compile) sourceFile output)
+      go output False ("--stack-depth" : rest) = go output True rest
+      go Nothing depth (option : path : rest)
+        | option == "-o" || option == "--output" = go (Just path) depth rest
+      go _ _ _ = Left usage
+  [] -> Left usage
+  where
+    usage = "usage: sil-interpreter compile <file.sil|file.json> [--stack-depth] [-o <file>]"
 
 prefixOf :: String -> String -> Bool
 prefixOf prefix value = take (length prefix) value == prefix
@@ -86,7 +93,7 @@ helpText = intercalate "\n"
   , "Usage:"
   , "  sil-interpreter run <file> [--machine] [--input <values...>]"
   , "  sil-interpreter ast <file> [--pretty]"
-  , "  sil-interpreter compile <file.sil|file.json> [-o <file.sam>]"
+  , "  sil-interpreter compile <file.sil|file.json> [--stack-depth] [-o <file>]"
   , "  sil-interpreter check <file>"
   , "  sil-interpreter --help"
   , "  sil-interpreter --version"
@@ -103,6 +110,7 @@ helpText = intercalate "\n"
   , "                       Quote arrays, e.g. --input '[1, [2, 3]]' 4."
   , "      --machine         Compile .sil or .json and run it on the machine."
   , "      --pretty          Pretty-print JSON produced by ast."
+  , "      --stack-depth     Compile to a text listing with stack depths."
   , "  -h, --help            Show this help."
   , "      --version         Show the version."
   ]

@@ -2,9 +2,16 @@ module Operations
   ( OperationError (..)
   , applyBinOp
   , parseBinOpName
+  , binOpName
   ) where
 
 import AST (BinOp (..))
+
+binOpName :: BinOp -> String
+binOpName op = case op of
+  Add -> "+"; Sub -> "-"; Mul -> "*"; Div -> "/"; Mod -> "%"
+  Eq -> "=="; Neq -> "!="; Lt -> "<"; Le -> "<="; Gt -> ">"; Ge -> ">="
+  And -> "&&"; Or -> "!!"
 
 parseBinOpName :: String -> Maybe BinOp
 parseBinOpName name = lookup name

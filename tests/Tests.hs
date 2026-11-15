@@ -17,6 +17,7 @@ import MachineParser (parseMachine)
 import Parser
 import System.Exit (exitFailure)
 import TaggedExpr (evalCompiled, runTagged)
+import StackDepth
 import Test.HUnit
 
 main :: IO ()
@@ -508,7 +509,81 @@ tests = TestList
   , TestLabel "compiled strings and arrays" extendedCompilerChecks
   , TestLabel "tagged expressions" taggedExprChecks
   , TestLabel "S-expressions" sexpressionChecks
+  , TestLabel "stack depths" stackDepthChecks
   ]
+
+stackDepthChecks :: Test
+stackDepthChecks = TestList
+  [ mkEq "empty program has zero depth" (Right (StackDepthInfo [] 0 (Just 0))) (analyze [])
+  , mkEq "arithmetic depths are after each instruction"
+      (Right (StackDepthInfo (map Just [1, 2, 3, 2, 1, 0]) 3 (Just 0)))
+      (analyze [M.PushConst 1, M.PushConst 2, M.PushConst 3, M.ApplyBinOp Mul, M.ApplyBinOp Add, M.WriteOutput])
+  , mkEq "branch joins use incoming edges, not textual order"
+      (Right (StackDepthInfo (map Just [1, 0, 1, 1, 0, 1, 1, 0]) 1 (Just 0)))
+      (analyze [M.PushConst 1, M.JumpIfZero "else", M.PushConst 2, M.Jump "end",
+                M.DefineLabel "else", M.PushConst 3, M.DefineLabel "end", M.WriteOutput])
+  , mkEq "loop back edge has a consistent depth"
+      (Right (StackDepthInfo (map Just [0, 1, 0]) 1 (Just 0)))
+      (analyze [M.DefineLabel "loop", M.PushConst 0, M.JumpIfNonZero "loop"])
+  , mkEq "stack growth on a loop is rejected" (Left (InconsistentStackDepth 0 0 1))
+      (analyze [M.DefineLabel "loop", M.PushConst 1, M.Jump "loop"])
+  , mkEq "different branch depths are rejected" (Left (InconsistentStackDepth 4 0 1))
+      (analyze [M.PushConst 1, M.JumpIfZero "end", M.PushConst 2, M.Jump "end", M.DefineLabel "end"])
+  , mkEq "expression programs may leave a result at exit"
+      (Right (StackDepthInfo [Just 1] 1 (Just 1))) (analyze [M.PushConst 42])
+  , mkEq "MF has no successor and unreachable instructions cannot underflow"
+      (Right (StackDepthInfo [Just 0, Nothing] 0 Nothing))
+      (analyze [M.MatchFail, M.DropTop])
+  , mkEq "jump skips unreachable code"
+      (Right (StackDepthInfo [Just 0, Nothing, Just 0] 0 (Just 0)))
+      (analyze [M.Jump "end", M.DropTop, M.DefineLabel "end"])
+  , mkEq "unknown labels remain errors" (Left (InvalidMachine (MI.UnknownLabel "missing")))
+      (analyze [M.Jump "missing"])
+  , mkEq "duplicate labels remain errors" (Left (InvalidMachine (MI.DuplicateLabel "x")))
+      (analyze [M.DefineLabel "x", M.DefineLabel "x"])
+  , mkEq "negative constructor arity is rejected"
+      (Left (InvalidStackOperand 0 "negative S-expression arity")) (analyze [M.MakeSExpression "X" (-1)])
+  , TestList [mkEq ("underflow: " ++ show instruction)
+      (Left (StackDepthUnderflow 0 required 0)) (analyze [instruction])
+      | (instruction, required) <-
+          [(M.WriteOutput, 1), (M.StoreVar "x", 1), (M.MakeArray 2, 2), (M.MakeSExpression "X" 2, 2),
+           (M.LoadIndex, 2), (M.StoreIndex, 3), (M.MatchPattern (M.TypeTest IntType), 1),
+           (M.DupTop, 1), (M.DropTop, 1), (M.ObjectLength, 1), (M.ApplyBinOp Add, 2)]]
+  , mkEq "objects, predicates and scopes preserve the right depths"
+      (Right (StackDepthInfo (map Just [1, 2, 1, 2, 2, 1, 1, 2, 3, 0, 0, 1, 0, 0, 0]) 3 Nothing))
+      (analyze [M.PushConst 1, M.PushConst 2, M.MakeArray 2, M.DupTop,
+                M.MatchPattern (M.TypeTest ArrayType), M.DropTop, M.PrepareScope,
+                M.PushConst 0, M.PushConst 3, M.StoreIndex, M.EnterScope,
+                M.MakeSExpression "Nil" 0, M.WriteOutput, M.LeaveScope, M.MatchFail])
+  , TestList [mkBool ("compiled source has balanced stack: " ++ source)
+      (case analyzeStackDepth (compileProgram (parseOK source)) of
+        Right info -> finalStackDepth info == Just 0
+        Left _ -> False)
+      | source <-
+          [ "{ read(x); x += 1; if (x) write([x, 2]); else write(3); }"
+          , "{ a = [[1]]; a[0][0] += 2; a[0][0] = 3; write(a); }"
+          , "{ for (i = 0; i < 3; i += 1) { switch (Pair(i, Nil)) { case Pair(x, Nil) -> if (x) write(x); | case _ -> skip; } } }"
+          , "{ do { switch (1) { case x -> switch (2) { case y -> write(x + y); } } } while (0); }"
+          ]]
+  , mkBool "listing uses aligned labels and after-instruction comments"
+      (case machineToStackListing (M.MachineProgram [M.DefineLabel "start", M.PushConst 42, M.WriteOutput]) of
+        Right listing -> "start:" `isInfixOf` listing && "CONST 42" `isInfixOf` listing
+          && "--   1\n" `isInfixOf` listing && "--   0\n" `isInfixOf` listing
+        Left _ -> False)
+  , mkBool "listing identifies unreachable code"
+      (case machineToStackListing (M.MachineProgram [M.MatchFail, M.WriteOutput]) of
+        Right listing -> "-- unreachable" `isInfixOf` listing
+        Left _ -> False)
+  , mkEq "parse annotated compilation" (Right (CompileStackDepth "program.sil" Nothing))
+      (parseCommand ["compile", "program.sil", "--stack-depth"])
+  , mkEq "annotated compilation supports output before flag" (Right (CompileStackDepth "program.json" (Just "out.txt")))
+      (parseCommand ["compile", "program.json", "-o", "out.txt", "--stack-depth"])
+  , mkEq "annotated compilation supports output after flag" (Right (CompileStackDepth "program.sil" (Just "out.txt")))
+      (parseCommand ["compile", "program.sil", "--stack-depth", "--output", "out.txt"])
+  , mkBool "duplicate depth flag rejected" (isLeft (parseCommand ["compile", "p.sil", "--stack-depth", "--stack-depth"]))
+  ]
+  where
+    analyze = analyzeStackDepth . M.MachineProgram
 
 patternChecks :: Test
 patternChecks = TestList

@@ -19,6 +19,7 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.FilePath (takeExtension)
 import System.IO (hPutStrLn, stderr)
+import StackDepth (machineToStackListing)
 
 main :: IO ()
 main = do
@@ -61,14 +62,13 @@ executeCommand command = case command of
     | takeExtension sourceFile == ".sam" ->
         failWith "compile expects a .sil or .json file"
     | otherwise -> withCompiledProgram sourceFile $ \program -> do
-        let result = machineToPrettyJson program ++ "\n"
-        case outputFile of
-          Nothing -> putStr result
-          Just path -> do
-            writeResult <- try (writeFile path result) :: IO (Either IOException ())
-            case writeResult of
-              Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
-              Right () -> pure ()
+        writeCompiled outputFile (machineToPrettyJson program ++ "\n")
+  CompileStackDepth sourceFile outputFile
+    | takeExtension sourceFile == ".sam" -> failWith "compile expects a .sil or .json file"
+    | otherwise -> withCompiledProgram sourceFile $ \program ->
+        case machineToStackListing program of
+          Left err -> failWith (show err)
+          Right listing -> writeCompiled outputFile listing
   Check sourceFile
     | takeExtension sourceFile == ".sam" -> withMachine sourceFile $ \program ->
         case Machine.validateMachine program of
@@ -76,6 +76,15 @@ executeCommand command = case command of
           Right () -> putStrLn (sourceFile ++ ": OK")
     | otherwise -> withProgram sourceFile $ \_ ->
         putStrLn (sourceFile ++ ": OK")
+
+writeCompiled :: Maybe FilePath -> String -> IO ()
+writeCompiled outputFile result = case outputFile of
+  Nothing -> putStr result
+  Just path -> do
+    writeResult <- try (writeFile path result) :: IO (Either IOException ())
+    case writeResult of
+      Left fileError -> failWith ("cannot write '" ++ path ++ "': " ++ show fileError)
+      Right () -> pure ()
 
 withProgram :: FilePath -> (Program -> IO ()) -> IO ()
 withProgram sourceFile action = withSource sourceFile $ \source ->

@@ -1,17 +1,37 @@
 {
-    read(rep);
+  read (smth);
+  
+  buf   = "[";
+  stack = {[[smth], 0]};
 
-    while (rep > 0) {
-        rep -= 1;
-        read(n);
+  while (stack != {}) {
+    switch (stack) {
+      case [vector, pos]:tl ->
+        if (pos >= vector.length) {
+	  buf += "]";
+	  stack = tl	
+	}
+	else {	
+          if (pos < vector.length && pos > 0) {
+	    buf += ", ";
+	  }
+	  
+	  current = vector[pos];
+	  pos    += 1;
+	  
+          switch (current) {
+            case x@#int    -> buf += x; stack = [vector, pos]:tl
+          | case s@#string -> buf += s; stack = [vector, pos]:tl
+          | case a@#array  -> 
+              buf += "array [";
+	      stack = [a, 0]:[vector, pos]:tl
+          | case s@#sexp   ->
+	      buf += "sexp [";
+	      stack = [s, 0]:[vector, pos]:tl
+          }
+	}
+    }}
 
-        f = 1;
-
-        while (n > 0) {
-            f *= n;
-            n -= 1;
-        }
-
-        write(f);
-    }
+  write (buf)
 }
+

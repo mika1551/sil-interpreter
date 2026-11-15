@@ -10,6 +10,7 @@ import AST
 import Data.List (intercalate)
 import Machine (Instruction (..), MachineProgram (..), PatternTest (..))
 import Numeric (showHex)
+import Operations (binOpName)
 
 programToJson :: Program -> String
 programToJson = renderCompact . programJson
@@ -116,12 +117,6 @@ exprJson expression = case expression of
   Index target index -> object [("elem", exprJson target), ("index", exprJson index)]
   Length target -> object [("length", exprJson target)]
   Bin op left right -> object [("binop", string (binOpName op)), ("left", exprJson left), ("right", exprJson right)]
-
-binOpName :: BinOp -> String
-binOpName op = case op of
-  Add -> "+"; Sub -> "-"; Mul -> "*"; Div -> "/"; Mod -> "%"
-  Eq -> "=="; Neq -> "!="; Lt -> "<"; Le -> "<="; Gt -> ">"; Ge -> ">="
-  And -> "&&"; Or -> "!!"
 
 object :: [(String, JsonValue)] -> JsonValue
 object = JsonObject

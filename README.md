@@ -129,6 +129,33 @@ behaving the same way.
 `ast` applies only to `.sil` and `.json` files. The machine runner executes
 the instructions in a `.sam` file as written.
 
+To see stack depths in the style of the target pattern probes, compile with
+`--stack-depth`:
+
+```sh
+cabal run sil-interpreter -- compile program.sil --stack-depth
+cabal run sil-interpreter -- compile program.json --stack-depth -o /tmp/program-stack.txt
+```
+
+This produces an aligned text listing with labels and a `--   n` comment showing
+the value stack depth **after** each instruction. For example, `write(1 + 2)`
+produces depths `1`, `2`, `1`, `0` for `CONST 1`, `CONST 2`, `BINOP "+"`, `WRITE`.
+The text listing is for inspection; executable `.sam` files still use the default
+JSON output.
+
+Depths follow both conditional edges and loop back edges. Stack underflow and
+conflicting depths at a control-flow join are reported as errors.
+`SCOPE`, `ENTER`, and `LEAVE` preserve the value stack. `MF` terminates its path
+without consuming a value; unreachable instructions show `-- unreachable`
+instead of a negative depth. This analysis checks stack structure independently
+of runtime values and does not predict which condition or pattern will match.
+
+The library exposes `StackDepth.analyzeStackDepth`, returning per-instruction
+depths (`Nothing` for unreachable code), the maximum depth, and the normal exit
+depth (`Nothing` if no path reaches it). `StackDepth.machineToStackListing`
+renders the annotated listing. `compileProgramChecked` also runs this analysis
+to validate generated code.
+
 The JSON format has a statement at its root. Statements include `"skip"`,
 `{"read":"name"}`, `{"write":expression}`,
 `{"assn":{"dst":"name","src":expression}}`, and

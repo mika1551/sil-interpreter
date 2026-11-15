@@ -4,6 +4,7 @@ import AST
 import Data.List (isPrefixOf)
 import qualified PatternMatrix as PM
 import Machine
+import StackDepth (analyzeStackDepth)
 
 compileProgram :: Program -> MachineProgram
 compileProgram (Program statements) = MachineProgram (fst (compileStatements prefix 0 Nothing statements))
@@ -12,7 +13,9 @@ compileProgram (Program statements) = MachineProgram (fst (compileStatements pre
     prefix = head [replicate n '$' | n <- [1 ..], (not . any (replicate n '$' `isPrefixOf`)) names]
 
 compileProgramChecked :: Program -> Either String MachineProgram
-compileProgramChecked = Right . compileProgram
+compileProgramChecked program = do
+  let compiled = compileProgram program
+  either (Left . show) (const (Right compiled)) (analyzeStackDepth compiled)
 
 compileStatements :: String -> Int -> Maybe String -> [Stmt] -> ([Instruction], Int)
 compileStatements prefix next continuation statements = case statements of
