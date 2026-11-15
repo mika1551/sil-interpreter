@@ -175,7 +175,7 @@ matchPattern state patternValue value = case patternValue of
   Wildcard -> Just []
   BindPattern name nested -> do
     bindings <- matchPattern state nested value
-    pure (bindings ++ [(name, value)])
+    pure ((name, value) : bindings)
   NumberPattern expected -> case value of
     Number actual | actual == expected -> Just []
     _ -> Nothing
@@ -301,6 +301,15 @@ apply state Add left@(Ref _) right@(Ref _) = do
     (ArrayObject leftValues, ArrayObject rightValues) ->
       Right (allocate state (ArrayObject (leftValues ++ rightValues)))
     _ -> Left (TypeError "addition expects two integers or two arrays")
+apply state op left@(Ref _) right@(Ref _)
+  | op == Eq || op == Neq = do
+      leftObject <- lookupObject state left
+      rightObject <- lookupObject state right
+      case (leftObject, rightObject) of
+        (StringObject a, StringObject b) ->
+          let matches = if op == Eq then a == b else a /= b
+          in Right (Number (if matches then 1 else 0), state)
+        _ -> Left (TypeError "equality expects two integers or two strings")
 apply state op left right = do
   leftNumber <- expectNumber left
   rightNumber <- expectNumber right

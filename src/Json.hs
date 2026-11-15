@@ -8,7 +8,7 @@ module Json
 import Data.Char (ord)
 import AST
 import Data.List (intercalate)
-import Machine (Instruction (..), MachineProgram (..))
+import Machine (Instruction (..), MachineProgram (..), PatternTest (..))
 import Numeric (showHex)
 
 programToJson :: Program -> String
@@ -37,9 +37,11 @@ instructionJson instruction = case instruction of
   ReadInput -> string "READ"
   WriteOutput -> string "WRITE"
   LoadVar name -> object [("LD", string name)]
-  EnterScope -> string "SCOPE"
-  LeaveScope -> string "ENDSCOPE"
-  BindVar name -> object [("BIND", string name)]
+  PrepareScope -> string "SCOPE"
+  EnterScope -> string "ENTER"
+  LeaveScope -> string "LEAVE"
+  DupTop -> string "DUP"
+  DropTop -> string "DROP"
   StoreVar name -> object [("ST", string name)]
   PushConst value -> object [("CONST", JsonNumber value)]
   PushString text -> object [("STRING", string text)]
@@ -47,11 +49,11 @@ instructionJson instruction = case instruction of
   MakeSExpression name count -> object [("SEXP", JsonArray [string name, JsonNumber count])]
   LoadIndex -> string "ELEM"
   StoreIndex -> string "SET"
-  IsType kind -> object [("ISTYPE", string (case kind of
-    IntType -> "int"; ArrayType -> "array"; StringType -> "string"; SExpressionType -> "sexp"))]
-  IsTag name count -> object [("ISTAG", JsonArray [string name, JsonNumber count])]
-  StringEquals text -> object [("STREQ", string text)]
-  MatchFail -> string "MATCHFAIL"
+  MatchPattern test -> object [("PATT", case test of
+    TypeTest kind -> string (case kind of
+      IntType -> "#int"; ArrayType -> "#array"; StringType -> "#string"; SExpressionType -> "#sexp")
+    TagTest name count -> JsonArray [string "Tag", string name, JsonNumber count])]
+  MatchFail -> string "MF"
   ObjectLength -> string "LENGTH"
   ApplyBinOp op -> object [("BINOP", string (binOpName op))]
   DefineLabel name -> object [("LABEL", string name)]

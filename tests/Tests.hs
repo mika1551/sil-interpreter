@@ -568,7 +568,7 @@ patternChecks = TestList
       , ("{ switch ({}) { case {} -> write(8); } switch ({'a', 'b'}) { case {first, second} -> write(first); write(second); } }", [8, 97, 98])
       , ("{ switch ({'a', 'b', 'c'}) { case (first : second : rest) -> write(first); write(second); write(rest[0]); } }", [97, 98, 99])
       , ("{ switch ([1]) { case #int -> write(0); | case #string -> write(0); | case #sexp -> write(0); | case #array -> write(9); } switch (42) { case number @ #int -> write(number); } switch (\"hello\") { case #string -> write(10); } switch (Leaf(1)) { case #sexp -> write(11); } }", [9, 42, 10, 11])
-      , ("{ switch (Pair(11, 11)) { case Pair(x, x) -> write(x); } switch (Pair(11, 22)) { case Pair(x, x) -> write(x); } switch ([33, 44]) { case [x, x] -> write(x); } switch ({55, 66}) { case {x, x} -> write(x); } switch (Leaf(77)) { case x @ Leaf(x) -> write(x[0]); } switch (Pair(Leaf(88), Leaf(99))) { case Pair(Leaf(x), Leaf(x)) -> write(x); } }", [11, 22, 44, 66, 77, 99])
+      , ("{ switch (Pair(11, 11)) { case Pair(x, x) -> write(x); } switch (Pair(11, 22)) { case Pair(x, x) -> write(x); } switch ([33, 44]) { case [x, x] -> write(x); } switch ({55, 66}) { case {x, x} -> write(x); } switch (Leaf(77)) { case x @ Leaf(x) -> write(x); } switch (Pair(Leaf(88), Leaf(99))) { case Pair(Leaf(x), Leaf(x)) -> write(x); } }", [11, 22, 44, 66, 77, 99])
       , ("{ x = 5; switch (Pair(1, 2)) { case Pair(x, 'z') -> skip; | case _ -> write(x); } write(x); }", [5, 5])
       , ("{ x = 5; switch (1) { case x -> x = 2; y = 3; write(x); } write(x); write(y); }", [2, 5, 3])
       , ("{ total = 0; switch (1) { case _ -> total = 7; } write(total); }", [7])
@@ -834,26 +834,41 @@ compiledPatternChecks = TestList
          (ArrayPattern [Wildcard, TypePattern IntType], Write (Const 5))]])
       | value <- [ArrayLiteral [], ArrayLiteral [Const 0], Const 0, StringLiteral ""], n <- [0, 1]]
   , mkEq "common outer constructor test is shared" 1
-      (length [() | M.IsTag "Pair" 2 <- sharedCode])
+      (length [() | M.MatchPattern (M.TagTest "Pair" 2) <- sharedCode])
   , mkEq "branch body is emitted once despite specialization" 1
       (length [() | M.PushConst 9876 <- sharedCode])
-  , TestList [mkEq "predicate stack underflow" (Left (MI.StackUnderflow 0))
+  , TestList [mkEq "predicate/stack operation underflow" (Left (MI.StackUnderflow 0))
         (MI.runMachine [] (M.MachineProgram [instruction]))
-      | instruction <- [M.IsType IntType, M.IsTag "X" 0, M.StringEquals "x"]]
+      | instruction <- [M.MatchPattern (M.TypeTest IntType), M.MatchPattern (M.TagTest "X" 0), M.DupTop, M.DropTop]]
+  , mkEq "DUP preserves reference identity" (Right [OutputArray [OutputNumber 9]])
+      (MI.runMachineInput [] (M.MachineProgram
+        [M.PushConst 1, M.MakeArray 1, M.DupTop, M.PushConst 0, M.PushConst 9,
+         M.StoreIndex, M.WriteOutput]))
+  , mkEq "DUP and DROP preserve operand order" (Right [4, 8])
+      (MI.runMachine [] (M.MachineProgram
+        [M.PushConst 8, M.PushConst 4, M.DupTop, M.DropTop, M.WriteOutput, M.WriteOutput]))
   , mkEq "explicit machine match failure" (Left MI.NoMatchingPattern)
       (MI.runMachine [] (M.MachineProgram [M.MatchFail]))
-  , mkEq "predicates reject incompatible values without errors" (Right [0, 0, 0])
+  , mkEq "predicates reject incompatible values without errors" (Right [0, 0])
       (MI.runMachine [] (M.MachineProgram
-        [ M.PushConst 0, M.IsTag "X" 0, M.WriteOutput
-        , M.PushConst 0, M.StringEquals "", M.WriteOutput
-        , M.PushConst 0, M.IsType ArrayType, M.WriteOutput ]))
+        [ M.PushConst 0, M.MatchPattern (M.TagTest "X" 0), M.WriteOutput
+        , M.PushConst 0, M.MatchPattern (M.TypeTest ArrayType), M.WriteOutput ]))
+  , mkEq "string equality uses content" (Right [1, 0])
+      (MI.runMachine [] (M.MachineProgram
+        [ M.PushString "hello", M.PushString "hello", M.ApplyBinOp Eq, M.WriteOutput
+        , M.PushString "hello", M.PushString "other", M.ApplyBinOp Eq, M.WriteOutput ]))
   , mkEq "all predicates serialize and parse" (Right predicateProgram)
       (parseMachine (machineToPrettyJson predicateProgram))
   , TestList [mkBool ("reject malformed predicate: " ++ source) (isLeft (parseMachine source))
-      | source <- ["[{\"ISTYPE\":\"unknown\"}]", "[{\"ISTYPE\":1}]",
-                   "[{\"ISTAG\":[\"X\",-1]}]", "[{\"ISTAG\":[\"X\",1.0]}]",
-                   "[{\"ISTAG\":[1,0]}]", "[{\"ISTAG\":[\"X\"]}]",
-                   "[{\"STREQ\":1}]", "[{\"MATCHFAIL\":0}]"]]
+      | source <- ["[{\"PATT\":\"unknown\"}]", "[{\"PATT\":1}]",
+                   "[{\"PATT\":[\"Tag\",\"X\",-1]}]", "[{\"PATT\":[\"Tag\",\"X\",1.0]}]",
+                   "[{\"PATT\":[\"Tag\",1,0]}]", "[{\"PATT\":[\"Tag\",\"X\"]}]",
+                   "[{\"MF\":0}]", "[{\"DUP\":1}]", "[{\"DROP\":1}]"]]
+  , TestList [mkBool ("reject replaced instruction: " ++ source) (isLeft (parseMachine source))
+      | source <- ["[{\"ISTYPE\":\"int\"}]", "[{\"ISTAG\":[\"X\",0]}]",
+                   "[{\"STREQ\":\"x\"}]", "[{\"BIND\":\"x\"}]",
+                   "[\"ENDSCOPE\"]", "[\"MATCHFAIL\"]"]]
+
   ]
   where
     values = [Const 0, Const 1, StringLiteral "", StringLiteral "a",
@@ -872,38 +887,44 @@ compiledPatternChecks = TestList
          (SExpressionPattern "Pair" [NumberPattern 0, NumberPattern 1], Write (Const 2)),
          (TypePattern SExpressionType, Write (Const 9876))]])
     predicateProgram = M.MachineProgram
-      ([M.IsType kind | kind <- [IntType, ArrayType, StringType, SExpressionType]]
-       ++ [M.IsTag "X" 2, M.StringEquals "Привет\n", M.MatchFail])
+      ([M.MatchPattern (M.TypeTest kind) | kind <- [IntType, ArrayType, StringType, SExpressionType]]
+       ++ [M.MatchPattern (M.TagTest "X" 2), M.DupTop, M.DropTop, M.MatchFail])
 
 
 machineScopeChecks :: Test
 machineScopeChecks = TestList
   [ mkEq "machine scopes restore bindings and preserve the value stack" (Right [3, 2, 4, 77, 1, 5])
       (MI.runMachine [] (M.MachineProgram
-        [ M.PushConst 1, M.StoreVar "x", M.PushConst 77, M.EnterScope
-        , M.PushConst 2, M.BindVar "x", M.EnterScope
-        , M.PushConst 3, M.BindVar "x", M.LoadVar "x", M.WriteOutput
+        [ M.PushConst 1, M.StoreVar "x", M.PushConst 77, M.PrepareScope
+        , M.PushConst 2, M.StoreVar "x", M.EnterScope, M.PrepareScope
+        , M.PushConst 3, M.StoreVar "x", M.EnterScope, M.LoadVar "x", M.WriteOutput
         , M.LeaveScope, M.LoadVar "x", M.WriteOutput
         , M.PushConst 4, M.StoreVar "x", M.LoadVar "x", M.WriteOutput
         , M.PushConst 5, M.StoreVar "y", M.LeaveScope, M.WriteOutput
         , M.LoadVar "x", M.WriteOutput, M.LoadVar "y", M.WriteOutput ]))
-  , mkEq "BIND replaces the local definition" (Right [2])
+  , mkEq "ST during setup replaces the local definition" (Right [2, 9])
       (MI.runMachine [] (M.MachineProgram
-        [ M.EnterScope, M.PushConst 1, M.BindVar "x", M.PushConst 2
-        , M.BindVar "x", M.LoadVar "x", M.WriteOutput, M.LeaveScope ]))
+        [ M.PushConst 9, M.StoreVar "x", M.PrepareScope, M.PushConst 1, M.StoreVar "x", M.PushConst 2
+        , M.StoreVar "x", M.EnterScope, M.LoadVar "x", M.WriteOutput, M.LeaveScope
+        , M.LoadVar "x", M.WriteOutput ]))
   , mkEq "scope definitions disappear on exit" (Left (MI.UndefinedVariable "x"))
       (MI.runMachine [] (M.MachineProgram
-        [M.EnterScope, M.PushConst 1, M.BindVar "x", M.LeaveScope, M.LoadVar "x"]))
-  , mkEq "cannot leave the global environment" (Left (MI.TypeError "missing pattern binding scope"))
+        [M.PrepareScope, M.PushConst 1, M.StoreVar "x", M.EnterScope, M.LeaveScope, M.LoadVar "x"]))
+  , mkEq "cannot leave the global environment" (Left (MI.TypeError "LEAVE requires an entered scope"))
       (MI.runMachine [] (M.MachineProgram [M.LeaveScope]))
-  , mkEq "BIND stack underflow" (Left (MI.StackUnderflow 1))
-      (MI.runMachine [] (M.MachineProgram [M.EnterScope, M.BindVar "x"]))
+  , mkEq "ST stack underflow during setup" (Left (MI.StackUnderflow 1))
+      (MI.runMachine [] (M.MachineProgram [M.PrepareScope, M.StoreVar "x"]))
   , mkEq "scope instructions parse" (Right scopeProgram)
-      (parseMachine "[\"SCOPE\",{\"CONST\":1},{\"BIND\":\"x\"},\"ENDSCOPE\"]")
+      (parseMachine "[\"SCOPE\",{\"CONST\":1},{\"ST\":\"x\"},\"ENTER\",\"LEAVE\"]")
   , mkEq "scope instructions serialize" (Right scopeProgram)
       (parseMachine (machineToJson scopeProgram))
   , TestList [mkBool ("reject malformed scope instruction: " ++ source) (isLeft (parseMachine source))
-      | source <- ["[\"BIND\"]", "[{\"BIND\":1}]", "[{\"SCOPE\":0}]", "[{\"ENDSCOPE\":0}]"]]
+      | source <- ["[{\"ENTER\":0}]", "[{\"SCOPE\":0}]", "[{\"LEAVE\":0}]"]]
+  , TestList [mkBool ("reject invalid scope lifecycle: " ++ show code)
+      (isLeft (MI.runMachine [] (M.MachineProgram code)))
+      | code <- [[M.EnterScope], [M.PrepareScope, M.EnterScope, M.EnterScope],
+                 [M.PrepareScope, M.LeaveScope], [M.PrepareScope, M.PrepareScope],
+                 [M.PrepareScope], [M.PrepareScope, M.EnterScope]]]
   , TestList [patternParity [] (parseOK source) | source <-
       [ "{ x = 3; while (x) { switch (x) { case x -> x = 0; } x -= 1; } write(x); }"
       , "{ i = 0; x = 9; while (i < 3) { switch (i) { case x -> if (x < 2) skip; else if (x) x = 0; } write(x); i += 1; } }"
@@ -913,4 +934,4 @@ machineScopeChecks = TestList
       ]]
   ]
   where
-    scopeProgram = M.MachineProgram [M.EnterScope, M.PushConst 1, M.BindVar "x", M.LeaveScope]
+    scopeProgram = M.MachineProgram [M.PrepareScope, M.PushConst 1, M.StoreVar "x", M.EnterScope, M.LeaveScope]

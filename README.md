@@ -333,7 +333,8 @@ uses character literals instead.
 Bindings shadow outer variables only for the selected branch. Assignments to
 other variables and mutations of shared objects persist. Repeated names are
 allowed: siblings bind from left to right, so the later binding wins. An alias
-binds after its inner pattern, so `x @ Leaf(x)` binds `x` to the whole object.
+binds before its inner pattern, so `x @ Leaf(x)` binds `x` to the element,
+matching the target compiler's binding order.
 Failed cases leave no bindings behind.
 
 JSON uses `{"switch":{"scrutinee":expression,"branches":[...]}}`, with each
@@ -361,29 +362,56 @@ source variable names. All successful paths leave that scope before continuing
 after the switch. Nested switches enter nested scopes, including when the
 compiler reuses a surrounding loop or conditional continuation.
 
-Seven SAM instructions support the generated decision trees and binding scopes:
+SAM uses the primitive instructions from `examples/abstract_machine.txt`.
+The `.sam` file format remains a JSON instruction array:
 
 | JSON instruction | Stack effect and behavior |
 | --- | --- |
-| `{"ISTYPE":"int"}` | Consume one value; push integer `1` if its type matches, otherwise `0`. Types are `int`, `array`, `string`, and `sexp`. |
-| `{"ISTAG":["Pair",2]}` | Consume one value; push `1` for an S-expression with this exact name and arity, otherwise `0`. Arity must be nonnegative. |
-| `{"STREQ":"hello"}` | Consume one value; push `1` for a string with this content, otherwise `0`. |
-| `"SCOPE"` | Enter an empty binding scope; leave the value stack unchanged. |
-| `{"BIND":"name"}` | Consume one value; define or replace the name in the current scope, shadowing an outer binding. |
-| `"ENDSCOPE"` | Leave the current scope, restoring outer bindings; leave the value stack unchanged. An attempt to leave the global environment reports a type error. |
-| `"MATCHFAIL"` | Stop with `NoMatchingPattern` (`no matching switch case` in the CLI). |
+| `{"PATT":"#int"}` | Consume one value; push integer `1` if its type matches, otherwise `0`. Types are `#int`, `#array`, `#string`, and `#sexp`. |
+| `{"PATT":["Tag","Pair",2]}` | Consume one value; push `1` for an S-expression with this exact name and arity, otherwise `0`. Arity must be nonnegative. |
+| `"DUP"` | Duplicate the top value. Objects retain their reference identity. |
+| `"DROP"` | Discard the top value. |
+| `"SCOPE"` | Open an empty binding scope for construction; leave the value stack unchanged. |
+| `"ENTER"` | Finish construction of the current scope and begin ordinary execution; leave the value stack unchanged. |
+| `"LEAVE"` | Remove the entered scope and restore outer bindings; leave the value stack unchanged. |
+| `"MF"` | Stop with `NoMatchingPattern` (`no matching switch case` in the CLI). This instruction occurs in the target compiler's output although it is omitted from the description. |
 
-The predicates return `0` for incompatible types and report stack underflow if
-no value is available. Existing integer comparisons, `LENGTH`, `ELEM`, and
-conditional jumps perform the remaining tests and field access. Shape checks
-precede field access, so an incompatible pattern fails without raising a type
-or bounds error. Compact and pretty SAM serialization support all seven forms.
+Between `SCOPE` and `ENTER`, `ST` defines or replaces a binding in the current
+scope, shadowing an outer name. After `ENTER`, `ST` updates the nearest existing
+binding. A new ordinary variable is introduced outside binding scopes, so it
+persists after the switch. The existing scope-map environment and its
+`BindingScope`/`VariableScope` distinction still control variable ownership.
 
-`ST` updates the nearest existing binding. A new variable assigned with `ST`
-is introduced outside binding scopes, so it persists after the switch, matching
-the direct interpreter. `BIND` defines a name in the current environment even
-if an outer binding exists; repeated `BIND`s replace it in traversal order.
-`SCOPE` and `ENDSCOPE` do not undo changes to shared heap objects.
+For example, this SAM program outputs `2` and then `10`:
+
+```json
+[
+  {"CONST":10}, {"ST":"x"},
+  "SCOPE", {"CONST":1}, {"ST":"x"}, "ENTER",
+  {"CONST":2}, {"ST":"x"}, {"LD":"x"}, "WRITE",
+  "LEAVE", {"LD":"x"}, "WRITE"
+]
+```
+
+Scope construction must finish before another scope is opened. `ENTER` without
+a scope under construction, `LEAVE` without an entered scope, and reaching the
+end of a program with an unclosed scope report type errors. Leaving a scope
+does not undo changes to shared heap objects.
+
+The compiler saves each switch's scrutinee in its own binding scope, then
+constructs a second scope for the selected branch. Both scopes are removed
+before continuing. Failed cases install no bindings. Pattern-matrix test sharing
+is retained; emitted instruction sequences need not match the target compiler.
+
+`PATT` returns `0` for incompatible types. String literal patterns use a string
+type check followed by `STRING` and `BINOP ==`; string `==` and `!=` compare
+content in both interpreters. Integer comparisons, `LENGTH`, `ELEM`, and jumps
+perform the remaining tests and field access. Shape checks precede field access,
+so incompatible patterns fail without raising type or bounds errors. Operand
+instructions report stack underflow when their required values are unavailable.
+
+The former `ISTYPE`, `ISTAG`, `STREQ`, `BIND`, `ENDSCOPE`, and `MATCHFAIL` forms
+have been replaced. Regenerate older compiled switch programs using `compile`.
 
 ## Test suite
 

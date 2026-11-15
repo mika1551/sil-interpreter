@@ -1,6 +1,7 @@
 module Machine
   ( MachineProgram (..)
   , Instruction (..)
+  , PatternTest (..)
   ) where
 
 import AST (BinOp, PatternType)
@@ -13,7 +14,7 @@ data Instruction
   | WriteOutput
   | LoadVar String
   | StoreVar String
-  | BindVar String
+  | PrepareScope
   | EnterScope
   | LeaveScope
   | PushConst Int
@@ -22,9 +23,9 @@ data Instruction
   | MakeSExpression String Int
   | LoadIndex
   | StoreIndex
-  | IsType PatternType
-  | IsTag String Int
-  | StringEquals String
+  | MatchPattern PatternTest
+  | DupTop
+  | DropTop
   | MatchFail
   | ObjectLength
   | ApplyBinOp BinOp
@@ -32,4 +33,9 @@ data Instruction
   | Jump String
   | JumpIfZero String
   | JumpIfNonZero String
+  deriving (Eq, Show)
+
+data PatternTest
+  = TypeTest PatternType
+  | TagTest String Int
   deriving (Eq, Show)

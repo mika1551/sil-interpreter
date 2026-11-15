@@ -92,7 +92,7 @@ patternBindings :: Pattern -> [(String, Occurrence)]
 patternBindings = walk []
   where
     walk path p = case p of
-      BindPattern name nested -> walk path nested ++ [(name, path)]
+      BindPattern name nested -> (name, path) : walk path nested
       ArrayPattern ps -> children path ps
       SExpressionPattern _ ps -> children path ps
       _ -> []

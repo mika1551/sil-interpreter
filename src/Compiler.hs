@@ -127,14 +127,14 @@ compileSwitch prefix next continuation scrutinee branches =
         (PM.compileMatrix (map fst branches))
       emitBodies counter [] = ([], counter)
       emitBodies counter ((i, (p, body)) : rest) =
-        let bindings = concat [loadOccurrence root path ++ [BindVar name]
+        let bindings = concat [loadOccurrence root path ++ [StoreVar name]
                               | (name, path) <- PM.patternBindings p]
             (code, afterBody) = compileStmt prefix counter (Just endLabel) body
             (remaining, final) = emitBodies afterBody rest
-        in ([DefineLabel (branchLabel i), EnterScope] ++ bindings ++ code ++ [Jump endLabel] ++ remaining, final)
+        in ([DefineLabel (branchLabel i), PrepareScope] ++ bindings ++ [EnterScope] ++ code ++ [Jump endLabel] ++ remaining, final)
       (bodies, finalNext) = emitBodies afterDecision (zip [0 :: Int ..] branches)
-      endCode = [DefineLabel endLabel, LeaveScope] ++ maybe [] (\target -> [Jump target]) continuation
-  in (compileExpr scrutinee ++ [StoreVar root] ++ decision ++ bodies ++ endCode, finalNext)
+      endCode = [DefineLabel endLabel, LeaveScope, LeaveScope] ++ maybe [] (\target -> [Jump target]) continuation
+  in (compileExpr scrutinee ++ [PrepareScope, StoreVar root, EnterScope] ++ decision ++ bodies ++ endCode, finalNext)
 
 loadOccurrence :: String -> PM.Occurrence -> [Instruction]
 loadOccurrence root path = LoadVar root : concatMap (\i -> [PushConst i, LoadIndex]) path
@@ -149,11 +149,12 @@ emitDecision root branchLabel next decision = case decision of
         (noCode, final) = emitDecision root branchLabel afterYes no
         load = loadOccurrence root path
         predicate = case test of
-          PM.TypeHead kind -> load ++ [IsType kind, JumpIfZero noLabel]
-          PM.NumberHead n -> load ++ [IsType IntType, JumpIfZero noLabel]
+          PM.TypeHead kind -> load ++ [MatchPattern (TypeTest kind), JumpIfZero noLabel]
+          PM.NumberHead n -> load ++ [MatchPattern (TypeTest IntType), JumpIfZero noLabel]
             ++ load ++ [PushConst n, ApplyBinOp Eq, JumpIfZero noLabel]
-          PM.StringHead text -> load ++ [StringEquals text, JumpIfZero noLabel]
-          PM.ArrayHead count -> load ++ [IsType ArrayType, JumpIfZero noLabel]
+          PM.StringHead text -> load ++ [MatchPattern (TypeTest StringType), JumpIfZero noLabel]
+            ++ load ++ [PushString text, ApplyBinOp Eq, JumpIfZero noLabel]
+          PM.ArrayHead count -> load ++ [MatchPattern (TypeTest ArrayType), JumpIfZero noLabel]
             ++ load ++ [ObjectLength, PushConst count, ApplyBinOp Eq, JumpIfZero noLabel]
-          PM.ConstructorHead name count -> load ++ [IsTag name count, JumpIfZero noLabel]
+          PM.ConstructorHead name count -> load ++ [MatchPattern (TagTest name count), JumpIfZero noLabel]
     in (predicate ++ yesCode ++ [DefineLabel noLabel] ++ noCode, final)

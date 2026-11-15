@@ -12,7 +12,7 @@ import Data.Foldable (toList)
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Text as Text
 import JsonValidation (validateJsonSyntax)
-import Machine (Instruction (..), MachineProgram (..))
+import Machine (Instruction (..), MachineProgram (..), PatternTest (..))
 import Operations (parseBinOpName)
 
 parseMachine :: String -> Either String MachineProgram
@@ -26,9 +26,12 @@ parseMachine source = do
 
 parseAt :: (Int, Value) -> Either String Instruction
 parseAt (index, value) = case value of
-  String "SCOPE" -> Right EnterScope
-  String "ENDSCOPE" -> Right LeaveScope
-  String "MATCHFAIL" -> Right MatchFail
+  String "SCOPE" -> Right PrepareScope
+  String "ENTER" -> Right EnterScope
+  String "LEAVE" -> Right LeaveScope
+  String "DUP" -> Right DupTop
+  String "DROP" -> Right DropTop
+  String "MF" -> Right MatchFail
   String "READ" -> Right ReadInput
   String "WRITE" -> Right WriteOutput
   String "ELEM" -> Right LoadIndex
@@ -44,26 +47,8 @@ parseAt (index, value) = case value of
 
 parseObject :: String -> String -> Value -> Either String Instruction
 parseObject path name operand = case name of
-  "ISTYPE" -> do
-    kind <- stringAt path operand
-    case kind of
-      "int" -> Right (IsType IntType)
-      "array" -> Right (IsType ArrayType)
-      "string" -> Right (IsType StringType)
-      "sexp" -> Right (IsType SExpressionType)
-      _ -> Left (path ++ ": unknown value type " ++ show kind)
-  "STREQ" -> StringEquals <$> stringAt path operand
-  "ISTAG" -> case operand of
-    Array values -> case toList values of
-      [tag, arity] -> do
-        constructor <- stringAt (path ++ "[0]") tag
-        count <- intAt (path ++ "[1]") arity
-        if count < 0 then Left (path ++ "[1]: S-expression arity must be nonnegative")
-          else Right (IsTag constructor count)
-      _ -> Left (path ++ ": expected [name, arity]")
-    _ -> Left (path ++ ": expected [name, arity]")
+  "PATT" -> MatchPattern <$> parsePatternTest path operand
   "LD" -> LoadVar <$> stringAt path operand
-  "BIND" -> BindVar <$> stringAt path operand
   "ST" -> StoreVar <$> stringAt path operand
   "CONST" -> PushConst <$> intAt path operand
   "STRING" -> PushString <$> stringAt path operand
@@ -101,3 +86,18 @@ intAt path (Number value) = case floatingOrInteger value :: Either Double Intege
     | otherwise -> Left (path ++ ": integer is outside the supported Int range")
   Left _ -> Left (path ++ ": expected an integer")
 intAt path _ = Left (path ++ ": expected an integer")
+
+parsePatternTest :: String -> Value -> Either String PatternTest
+parsePatternTest path operand = case operand of
+  String "#int" -> Right (TypeTest IntType)
+  String "#array" -> Right (TypeTest ArrayType)
+  String "#string" -> Right (TypeTest StringType)
+  String "#sexp" -> Right (TypeTest SExpressionType)
+  Array values -> case toList values of
+    [String "Tag", tag, arity] -> do
+      name <- stringAt (path ++ "[1]") tag
+      count <- intAt (path ++ "[2]") arity
+      if count < 0 then Left (path ++ "[2]: tag arity must be nonnegative")
+        else Right (TagTest name count)
+    _ -> Left (path ++ ": expected [\"Tag\", name, arity]")
+  _ -> Left (path ++ ": expected #int, #array, #string, #sexp, or [\"Tag\", name, arity]")
