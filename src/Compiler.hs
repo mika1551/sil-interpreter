@@ -34,7 +34,9 @@ compileStmt prefix next continuation statement = case statement of
   AssignOp name op expression ->
     (LoadVar name : compileExpr expression ++ [ApplyBinOp op, StoreVar name], next)
   SetIndex target index value ->
-    (compileExpr target ++ compileExpr index ++ [PushConst 0, ApplyBinOp Add]
+    -- Validate the index before evaluating the value. Unlike addition,
+    -- subtraction remains integer-only when strings support concatenation.
+    (compileExpr target ++ compileExpr index ++ [PushConst 0, ApplyBinOp Sub]
       ++ compileExpr value ++ [StoreIndex], next)
   SetIndexOp target index op value ->
     let objectTemp = prefix ++ "object_" ++ show next

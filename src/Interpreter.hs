@@ -294,28 +294,56 @@ replaceAt position value values
   | otherwise = Right (take position values ++ [value] ++ drop (position + 1) values)
 
 apply :: Runtime -> BinOp -> Value -> Value -> Either StateError (Value, Runtime)
+apply state op left right
+  | op == Eq || op == Neq = do
+      equal <- equalValues state Set.empty left right
+      let matches = if op == Eq then equal else not equal
+      Right (Number (if matches then 1 else 0), state)
 apply state Add left@(Ref _) right@(Ref _) = do
   leftObject <- lookupObject state left
   rightObject <- lookupObject state right
   case (leftObject, rightObject) of
     (ArrayObject leftValues, ArrayObject rightValues) ->
       Right (allocate state (ArrayObject (leftValues ++ rightValues)))
-    _ -> Left (TypeError "addition expects two integers or two arrays")
-apply state op left@(Ref _) right@(Ref _)
-  | op == Eq || op == Neq = do
-      leftObject <- lookupObject state left
-      rightObject <- lookupObject state right
-      case (leftObject, rightObject) of
-        (StringObject a, StringObject b) ->
-          let matches = if op == Eq then a == b else a /= b
-          in Right (Number (if matches then 1 else 0), state)
-        _ -> Left (TypeError "equality expects two integers or two strings")
+    (StringObject a, StringObject b) ->
+      Right (allocate state (StringObject (a ++ b)))
+    _ -> Left (TypeError "addition expects two integers, two arrays, or a string with a string or integer")
+apply state Add left@(Ref _) (Number right) = do
+  object <- lookupObject state left
+  case object of
+    StringObject text -> Right (allocate state (StringObject (text ++ show right)))
+    _ -> Left (TypeError "only strings can be concatenated with integers")
+apply state Add (Number left) right@(Ref _) = do
+  object <- lookupObject state right
+  case object of
+    StringObject text -> Right (allocate state (StringObject (show left ++ text)))
+    _ -> Left (TypeError "only strings can be concatenated with integers")
 apply state op left right = do
   leftNumber <- expectNumber left
   rightNumber <- expectNumber right
   case Operations.applyBinOp op leftNumber rightNumber of
     Left Operations.DivisionByZero -> Left DivisionByZero
     Right value -> Right (Number value, state)
+
+-- Compare contents rather than allocation addresses. Remember pairs along each
+-- path so mutable cyclic objects can be compared without infinite recursion.
+equalValues :: Runtime -> Set.Set (Int, Int) -> Value -> Value -> Either StateError Bool
+equalValues _ _ (Number left) (Number right) = Right (left == right)
+equalValues state visited left@(Ref a) right@(Ref b) = do
+  leftObject <- lookupObject state left
+  rightObject <- lookupObject state right
+  if Set.member (a, b) visited then Right True else
+    let next = Set.insert (a, b) visited
+        elements xs ys
+          | length xs /= length ys = Right False
+          | otherwise = and <$> sequence (zipWith (equalValues state next) xs ys)
+    in case (leftObject, rightObject) of
+      (StringObject x, StringObject y) -> Right (x == y)
+      (ArrayObject xs, ArrayObject ys) -> elements xs ys
+      (SExpressionObject x xs, SExpressionObject y ys)
+        | x == y -> elements xs ys
+      _ -> Right False
+equalValues _ _ _ _ = Right False
 
 resolveOutput :: Runtime -> Set.Set Int -> Value -> Either StateError OutputValue
 resolveOutput _ _ (Number value) = Right (OutputNumber value)

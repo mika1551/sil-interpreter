@@ -509,8 +509,67 @@ tests = TestList
   , TestLabel "compiled strings and arrays" extendedCompilerChecks
   , TestLabel "tagged expressions" taggedExprChecks
   , TestLabel "S-expressions" sexpressionChecks
+  , TestLabel "value operations and traversal" valueOperationChecks
   , TestLabel "stack depths" stackDepthChecks
   ]
+
+valueOperationChecks :: Test
+valueOperationChecks = TestList
+  [ matching "string concatenation and integer conversion"
+      "{ write(\"a\" + \"b\"); write(\"n=\" + -42); write(7 + \"!\"); write(1 + 2); }"
+      [OutputString "ab", OutputString "n=-42", OutputString "7!", OutputNumber 3]
+  , matching "concatenation allocates a fresh string"
+      "{ a = \"x\"; b = a; a += \"y\"; a[0] = 90; write(a); write(b); }"
+      [OutputString "Zy", OutputString "x"]
+  , matching "indexed string compound concatenation"
+      "{ a = [\"x\"]; a[0] += 42; write(a[0]); }" [OutputString "x42"]
+  , matching "structural list and object equality"
+      ("{ write({} == {}); write({1} != {}); write({1, 2} == 1:2:{}); "
+       ++ "write(Node([1, \"x\"], {}) == Node([1, \"x\"], {})); "
+       ++ "write(Node(1) != Other(1)); write(Node(1) != Node(2)); "
+       ++ "write(Node(1) != Node(1, 2)); write([] != {}); write(0 != {}); "
+       ++ "write(\"1\" == 1); write([1] == [1, 2]); }")
+      (map OutputNumber [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0])
+  , matching "cyclic equality terminates and checks other fields"
+      ("{ a = [0, 1]; a[0] = a; b = [0, 1]; b[0] = b; "
+       ++ "write(a == b); b[1] = 2; write(a != b); "
+       ++ "x = Node(0); x[0] = x; y = Node(0); y[0] = y; write(x == y); }")
+      (map OutputNumber [1, 1, 1])
+  , TestList [matching ("stack traversal: " ++ expression)
+      (traversal expression) [OutputString expected]
+      | (expression, expected) <-
+          [("42", "[42]"), ("\"hello\"", "[hello]"), ("[]", "[array []]"),
+           ("[1, \"hello\", [2, []]]", "[array [1, hello, array [2, array []]]]"),
+           ("Node(1, [2], Leaf(\"x\"), Nil)", "[sexp [1, array [2], sexp [x], sexp []]]"),
+           ("{}", "[sexp []]")]]
+  , TestList [TestList
+      [ mkBool ("direct invalid addition: " ++ source)
+          (isLeft (runProgramValues [] (parseOK source)))
+      , mkBool ("machine invalid addition: " ++ source)
+          (isLeft (MI.runMachineValues [] (compileProgram (parseOK source))))
+      ] | source <- ["{ write(\"x\" + []); }", "{ write([] + 1); }",
+                     "{ write(1 + Node()); }", "{ write(\"x\" + Node()); }"]]
+  ]
+  where
+    matching label source expected =
+      let ast = parseOK source
+      in TestList
+        [ mkEq ("direct " ++ label) (Right expected) (runProgramValues [] ast)
+        , mkEq ("machine " ++ label) (Right expected)
+            (compileProgramChecked ast >>= either (Left . show) Right . MI.runMachineValues [])
+        ]
+    traversal expression = unlines
+      [ "{ smth = " ++ expression ++ "; buf = \"[\"; stack = {[[smth], 0]};"
+      , "while (stack != {}) { switch (stack) { case [vector, pos]:tl ->"
+      , "if (pos >= vector.length) { buf += \"]\"; stack = tl } else {"
+      , "if (pos < vector.length && pos > 0) { buf += \", \"; }"
+      , "current = vector[pos]; pos += 1; switch (current) {"
+      , "case x@#int -> buf += x; stack = [vector, pos]:tl"
+      , "| case s@#string -> buf += s; stack = [vector, pos]:tl"
+      , "| case a@#array -> buf += \"array [\"; stack = [a, 0]:[vector, pos]:tl"
+      , "| case s@#sexp -> buf += \"sexp [\"; stack = [s, 0]:[vector, pos]:tl"
+      , "} } } } write(buf) }"
+      ]
 
 stackDepthChecks :: Test
 stackDepthChecks = TestList

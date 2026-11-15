@@ -34,6 +34,18 @@ The program is a block with one or more statements inside it:
 
 ## Example program
 
+The current `program.sil` reads one value and builds a string describing its
+contents using an explicit traversal stack and type patterns:
+
+```sh
+cabal run sil-interpreter -- run program.sil --input '[1, "hello", [2, 3]]'
+cabal run sil-interpreter -- run program.sil --machine --input '[1, "hello", [2, 3]]'
+```
+
+Both commands print `[array [1, hello, array [2, 3]]]`.
+
+Another example computes factorials:
+
 ```sil
 {
     read(rep);
@@ -188,6 +200,18 @@ Each literal evaluation allocates a new object. `+` concatenates arrays into a
 new array, preserving references to nested objects. `write` resolves references
 at program completion, matching the direct interpreter; cyclic arrays produce
 an error.
+
+`+` also concatenates strings, allocating a new string. If one operand is a
+string and the other is an integer, the integer is converted to decimal text:
+`"n=" + 42` produces `"n=42"`, and `42 + "!"` produces `"42!"`.
+These rules also apply to `+=`, including indexed compound assignments.
+
+`==` and `!=` compare values by content. Arrays compare their elements;
+S-expressions compare their constructor names, arities, and fields recursively.
+Different value types compare unequal. In particular, `stack != {}` tests
+whether a list is nonempty. Cyclic objects compare without infinite recursion:
+revisiting the same pair of objects counts as equal along that path, while all
+other fields must still match. Printing cyclic objects remains an error.
 
 The JSON expression forms are `{"string":"hello"}`,
 `{"array":[expression, ...]}`, `{"elem":expression,"index":expression}`, and
